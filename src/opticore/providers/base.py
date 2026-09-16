@@ -52,9 +52,17 @@ class BaseProvider(ABC):
     def _check_api_key(self, required_var: str) -> str:
         token = self._api_key or os.environ.get(required_var)
         if not token:
+            # Provide helpful hints based on common provider env vars
+            hints = {
+                "OPENAI_API_KEY": "Get your key at https://platform.openai.com/api-keys",
+                "ANTHROPIC_API_KEY": "Get your key at https://console.anthropic.com/",
+                "COHERE_API_KEY": "Get your key at https://dashboard.cohere.com/api-keys",
+                "GOOGLE_API_KEY": "Get your key at https://makersuite.google.com/app/apikey",
+            }
+            hint = hints.get(required_var, f"Check your {required_var} is set correctly.")
             raise ProviderAuthError(
-                f"Missing API key. Set {required_var} in your environment "
-                "or .env file."
+                f"Missing API key. Set {required_var} in your environment or .env file. "
+                f"Hint: {hint}"
             )
         return token
 

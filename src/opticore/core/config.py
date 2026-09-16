@@ -69,7 +69,11 @@ class OptimizationConfig:
     ) -> None:
         self.safety_mode = SafetyMode(safety_mode)
         if max_token_budget < 0:
-            raise ConfigurationError("max_token_budget must be >= 0")
+            raise ConfigurationError(
+                f"max_token_budget must be >= 0, got {max_token_budget}. "
+                "Hint: Set max_token_budget to a non-negative integer (e.g., 4096) "
+                "or remove the constraint to allow unlimited tokens."
+            )
         self.max_token_budget = max_token_budget
         self.enable_token_optimization = bool(enable_token_optimization)
         self.enable_prompt_optimization = bool(enable_prompt_optimization)
@@ -78,16 +82,26 @@ class OptimizationConfig:
         self.enable_model_routing = bool(enable_model_routing)
         if not 0.0 < semantic_cache_threshold <= 1.0:
             raise ConfigurationError(
-                "semantic_cache_threshold must be in (0, 1]"
+                f"semantic_cache_threshold must be in (0, 1], got {semantic_cache_threshold}. "
+                "Hint: Use a value between 0.0 (exclusive) and 1.0 (inclusive). "
+                "Typical values: 0.85-0.95 for strict matching, 0.70-0.85 for lenient matching."
             )
         self.semantic_cache_threshold = float(semantic_cache_threshold)
         if cache_ttl_seconds < 0:
-            raise ConfigurationError("cache_ttl_seconds must be >= 0")
+            raise ConfigurationError(
+                f"cache_ttl_seconds must be >= 0, got {cache_ttl_seconds}. "
+                "Hint: Set cache_ttl_seconds to a non-negative value. "
+                "Use 0 to disable TTL, or a positive value like 3600.0 for 1 hour."
+            )
         self.cache_ttl_seconds = float(cache_ttl_seconds)
         self.prioritize_recent = bool(prioritize_recent)
         self.quality_enabled = bool(quality_enabled)
         if not 0.0 < quality_minimum_score <= 1.0:
-            raise ConfigurationError("quality_minimum_score must be in (0, 1]")
+            raise ConfigurationError(
+                f"quality_minimum_score must be in (0, 1], got {quality_minimum_score}. "
+                "Hint: Use a value between 0.0 (exclusive) and 1.0 (inclusive). "
+                "Typical values: 0.80-0.90 for strict quality, 0.60-0.80 for lenient quality."
+            )
         self.quality_minimum_score = float(quality_minimum_score)
         self.quality_reject_on_failure = bool(quality_reject_on_failure)
         self.quality_evaluator = quality_evaluator or "character"
@@ -151,7 +165,24 @@ class OptimizationConfig:
         try:
             config = cls(**{k: v for k, v in data.items() if k in known})
         except TypeError as exc:
-            raise ConfigurationError(f"Invalid configuration keys: {exc}") from exc
+            # Extract unknown keys from error message
+            unknown_keys = [k for k in data.keys() if k not in known]
+            hint = ""
+            if unknown_keys:
+                # Suggest closest known key for each unknown
+                suggestions = []
+                for unknown in unknown_keys:
+                    # Simple fuzzy match: find known keys with similar prefix
+                    matches = [k for k in known if unknown[:3] in k or k[:3] in unknown]
+                    if matches:
+                        suggestions.append(f"{unknown} -> {matches[0]}")
+                if suggestions:
+                    hint = f" Did you mean: {', '.join(suggestions[:3])}?"
+            raise ConfigurationError(
+                f"Invalid configuration keys: {exc}. "
+                f"Unknown keys: {unknown_keys}.{hint} "
+                f"Valid keys: {sorted(known)}"
+            ) from exc
         config.extra = extra
         return config
 
@@ -175,11 +206,22 @@ class ProviderConfig:
         extra: dict[str, Any] | None = None,
     ) -> None:
         if not provider:
-            raise ConfigurationError("provider name must not be empty")
+            raise ConfigurationError(
+                "provider name must not be empty. "
+                "Hint: Specify a provider name like 'openai', 'anthropic', or 'cohere'."
+            )
         if timeout_seconds <= 0:
-            raise ConfigurationError("timeout_seconds must be > 0")
+            raise ConfigurationError(
+                f"timeout_seconds must be > 0, got {timeout_seconds}. "
+                "Hint: Set timeout_seconds to a positive value. "
+                "Typical values: 30.0 for fast APIs, 60.0 for standard requests, 120.0 for slow operations."
+            )
         if max_retries < 0:
-            raise ConfigurationError("max_retries must be >= 0")
+            raise ConfigurationError(
+                f"max_retries must be >= 0, got {max_retries}. "
+                "Hint: Set max_retries to a non-negative integer. "
+                "Use 0 to disable retries, or 3-5 for resilient operation."
+            )
         self.provider = provider
         self.model = model
         self.api_key_env = api_key_env
