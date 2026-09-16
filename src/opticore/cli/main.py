@@ -1,19 +1,25 @@
-"""AI-OptiCore command-line interface."""
+"""AI-OptiCore command-line interface.
+
+Every command:
+- has ``--help``
+- returns useful errors (exit code 1 on operational failure, 2 on CLI misuse)
+- never dumps sensitive data
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from typing import Any
 
 from opticore import __version__
-from opticore.core.config import OptimizationConfig, SafetyMode
+from opticore.core.config import OptimizationConfig, SafetyMode, load_config
+from opticore.exceptions import OptiCoreError
 from opticore.hardware import describe_detailed, detect_backend, list_backends
 from opticore.providers import available_providers
 
-CONFIG_PATH = "opticore.json"
+CONFIG_PATH = "opticore.yaml"
 
 
 def _error(message: str, code: int = 1) -> None:
@@ -38,7 +44,7 @@ def _entrypoint_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("init", help="Create a starter opticore.json config")
+    sub.add_parser("init", help="Create a starter opticore.yaml config")
     sub.add_parser("config", help="Show active configuration")
     sub.add_parser("hardware", help="Detect available hardware backends")
     sub.add_parser("models", help="List providers and available models")
@@ -46,7 +52,11 @@ def _entrypoint_parser() -> argparse.ArgumentParser:
     p_opt = sub.add_parser("optimize", help="Optimize a prompt (stdin or --prompt)")
     p_opt.add_argument("--prompt", help="Prompt text to optimize")
     p_opt.add_argument("--system", help="System prompt")
-    p_opt.add_argument("--safety", choices=[m.value for m in SafetyMode], default="safe")
+    p_opt.add_argument(
+        "--safety", choices=[m.value for m in SafetyMode], default=None,
+        help="Override safety mode (default: from config / safe)",
+    )
+    p_opt.add_argument("--config", default=None, help="Path to optics config file")
     p_opt.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
     p_bench = sub.add_parser("benchmark", help="Run a real benchmark")
@@ -61,50 +71,59 @@ def _entrypoint_parser() -> argparse.ArgumentParser:
         help="Provider (fake uses deterministic mock; safe for CI)",
     )
     p_bench.add_argument("--model", default=None, help="Model identifier")
+    p_bench.add_argument("--config", default=None, help="Path to optics config file")
+    p_bench.add_argument("--output", default=None, help="Write JSON report to a file")
     p_bench.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
-    p_cache = sub.add_parser("cache", help="Inspect and clear the cache")
-    p_cache.add_argument("--clear", action="store_true", help="Clear cache contents")
+    sub.add_parser("cache", help="Explain cache behavior for this configuration")
     return parser
 
 
 def cmd_init(args: argparse.Namespace) -> None:
+    import os
+
+    from opticore.core.config import config_template
+
     if os.path.exists(CONFIG_PATH):
         _error(f"{CONFIG_PATH} already exists")
     template = {
-        "safety_mode": "safe",
-        "max_token_budget": 4096,
-        "enable_token_optimization": True,
-        "enable_prompt_optimization": True,
-        "enable_context_optimization": True,
-        "enable_semantic_cache": True,
-        "enable_model_routing": True,
-        "semantic_cache_threshold": 0.90,
-        "cache_ttl_seconds": 3600,
-        "prioritize_recent": True,
-        "log_prompts": False,
+        **config_template(),
         "provider": {"name": "openai", "model": ""},
     }
+
+    def _dump(obj: Any, indent: int = 0) -> str:
+        lines: list[str] = []
+        for key, value in obj.items():
+            prefix = " " * indent
+            if isinstance(value, dict):
+                lines.append(f"{prefix}{key}:")
+                lines.append(_dump(value, indent + 2))
+            elif isinstance(value, bool):
+                lines.append(f"{prefix}{key}: {'true' if value else 'false'}")
+            else:
+                lines.append(f"{prefix}{key}: {value}")
+        return "\n".join(lines)
+
     with open(CONFIG_PATH, "w") as fh:
-        json.dump(template, fh, indent=2)
+        fh.write("# AI-OptiCore configuration. Never put API keys in here.\n")
+        fh.write("# Keep secrets in environment variables (e.g. OPENAI_API_KEY).\n")
+        fh.write(_dump(template))
         fh.write("\n")
     print(f"wrote {CONFIG_PATH} (review before use)")
 
 
-def _load_config_from_disk() -> OptimizationConfig | None:
-    if not os.path.exists(CONFIG_PATH):
-        return None
+def _load(config_path: str | None) -> OptimizationConfig:
+    path = config_path or CONFIG_PATH
     try:
-        with open(CONFIG_PATH) as fh:
-            data = json.load(fh)
-        return OptimizationConfig.from_dict(data)
-    except Exception as exc:  # noqa: BLE001
-        print(f"warning: could not read {CONFIG_PATH}: {exc}", file=sys.stderr)
-        return None
+        return load_config(path if config_path else None)
+    except OptiCoreError as exc:
+        if config_path:
+            _error(str(exc))
+        return OptimizationConfig()
 
 
 def cmd_config(args: argparse.Namespace) -> None:
-    config = _load_config_from_disk() or OptimizationConfig()
+    config = _load(getattr(args, "config", None))
     print(json.dumps(config.to_dict(), indent=2))
 
 
@@ -128,7 +147,7 @@ def cmd_models(args: argparse.Namespace) -> None:
         try:
             provider = get_provider(name)
             print(f"  {name}: {', '.join(provider.models()) or '(no default model)'}")
-        except Exception as exc:  # noqa: BLE001
+        except OptiCoreError as exc:
             print(f"  {name}: unavailable ({exc})")
 
 
@@ -141,8 +160,9 @@ def cmd_optimize(args: argparse.Namespace) -> None:
     if not prompt:
         _error("no prompt provided (use --prompt or pipe stdin)")
 
-    config = _load_config_from_disk() or OptimizationConfig()
-    config.safety_mode = SafetyMode(args.safety)
+    config = _load(args.config)
+    if args.safety:
+        config.safety_mode = SafetyMode(args.safety)
     optimizer = Optimizer(config=config)
     outcome = optimizer.optimize(prompt, system=args.system)
 
@@ -157,6 +177,8 @@ def cmd_optimize(args: argparse.Namespace) -> None:
                     "tokens_saved": outcome.tokens_saved,
                     "reduction_percent": outcome.reduction_percent,
                     "optimizers_run": outcome.optimizers_run,
+                    "changes": outcome.changes,
+                    "quality_verified": outcome.quality_verified,
                     "warnings": outcome.warnings,
                 },
                 indent=2,
@@ -168,6 +190,10 @@ def cmd_optimize(args: argparse.Namespace) -> None:
     print(f"Optimized tokens: {outcome.optimized_tokens}")
     print(f"Tokens saved: {outcome.tokens_saved} ({outcome.reduction_percent}%)")
     print(f"Optimizers: {', '.join(outcome.optimizers_run)}")
+    if outcome.changes:
+        print("Changes:")
+        for change in outcome.changes:
+            print(f"  - {change}")
     if outcome.warnings:
         print("WARNINGS:")
         for warning in outcome.warnings:
@@ -178,7 +204,6 @@ def cmd_optimize(args: argparse.Namespace) -> None:
 
 def cmd_benchmark(args: argparse.Namespace) -> None:
     from opticore.benchmarks.runner import BenchmarkRunner
-    from opticore.core.config import OptimizationConfig
 
     provider = (
         _load_fake_provider()
@@ -186,17 +211,25 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
         else get_provider_from_name(args.provider)
     )
     samples = _build_samples(args.samples)
-    config = _load_config_from_disk() or OptimizationConfig()
+    config = _load(args.config)
     runner = BenchmarkRunner(
         provider=provider,
         model=args.model or "benchmark-model",
         samples=samples,
         config=config,
         repeats=args.repeats,
+        provider_notes=(
+            ["fake provider: token savings are real, latency is not representative"]
+            if args.provider == "fake"
+            else []
+        ),
     )
     result = runner.run()
+    if args.output:
+        with open(args.output, "w") as fh:
+            json.dump(result.to_dict(), fh, indent=2)
     if args.json:
-        print(json.dumps(_benchmark_to_dict(result), indent=2))
+        print(json.dumps(result.to_dict(), indent=2))
         return
     print(result.render())
 
@@ -227,29 +260,20 @@ def _build_samples(count: int):
     ]
 
 
-def _benchmark_to_dict(result: Any) -> dict[str, Any]:
-    return {
-        "model": result.model,
-        "provider": result.provider,
-        "hardware": result.hardware,
-        "samples": result.samples,
-        "baseline": result.baseline,
-        "optimized": result.optimized,
-        "metrics": result.metrics,
-        "notes": result.notes,
-    }
-
-
 def cmd_cache(args: argparse.Namespace) -> None:
-    if args.clear:
-        print("cache cleared")
-        return
-    print("cache usage: run a benchmark or use the Python API to populate the cache")
+    config = _load(getattr(args, "config", None))
+    print("Cache is in-memory by default and process-local.")
+    if config.enable_semantic_cache:
+        print(f"Semantic cache: enabled (threshold={config.semantic_cache_threshold})")
+    else:
+        print("Semantic cache: disabled")
+    print(f"TTL: {config.cache_ttl_seconds}s")
+    print("Use the Python API (AIClient) to populate and inspect the cache.")
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = _entrypoint_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     handlers = {
         "init": cmd_init,
         "config": cmd_config,
@@ -259,12 +283,23 @@ def main() -> None:
         "benchmark": cmd_benchmark,
         "cache": cmd_cache,
     }
-    handlers[args.command](args)
+    try:
+        handlers[args.command](args)
+    except KeyboardInterrupt:
+        print("error: interrupted", file=sys.stderr)
+        return 130
+    except OptiCoreError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001 - last-resort boundary
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def cli() -> None:
-    main()
+    sys.exit(main())
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

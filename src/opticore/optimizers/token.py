@@ -1,4 +1,16 @@
-"""Token counting and analysis using real tokenizer implementations."""
+"""Token counting and analysis using real tokenizer implementations.
+
+Counting never uses ``characters / 4`` or ``words / 0.75`` heuristics. When a
+tokenizer for a specific model is unavailable, the behavior is explicit:
+
+- ``mode == "model"``   -> a real tokenizer exists for the requested model.
+- ``mode == "fallback"`` -> the model was unknown to the registry; a
+  documented default encoding is used and reported (``fallback_for`` set).
+- ``mode == "encoding"`` -> an explicit encoding name was used.
+- ``mode == "custom"``  -> a caller-supplied counter was used.
+
+With ``strict=True`` an unknown model raises :class:`UnsupportedModelError`
+instead of silently falling back."""
 
 from __future__ import annotations
 
@@ -7,12 +19,15 @@ from typing import TYPE_CHECKING, Any
 
 from opticore.core.config import OptimizationConfig
 from opticore.core.interfaces import OptimizerRequest, OptimizerResult
+from opticore.exceptions import TokenizerNotFoundError, UnsupportedModelError
 from opticore.optimizers.base import BaseOptimizer
 
 if TYPE_CHECKING:
     import tiktoken
 
 logger = logging.getLogger("opticore.optimizers.token")
+
+_DEFAULT_ENCODING = "cl100k_base"
 
 
 class Tokenizer:
@@ -29,25 +44,57 @@ class Tokenizer:
         encoding_name: str | None = None,
         model: str | None = None,
         count_fn: Any | None = None,
+        strict: bool = False,
     ) -> None:
         self.encoding_name = encoding_name
         self.model = model
         self._count_fn = count_fn
         self._encoding: tiktoken.Encoding | None = None
+        self._fallback_for: str | None = None
+        self._load_error: str | None = None
+        self.strict = strict
+
+    @property
+    def mode(self) -> str:
+        """Classifier describing what kind of tokenizer is in use."""
+        if self._count_fn is not None:
+            return "custom"
+        if self._fallback_for is not None:
+            return "fallback"
+        if self.model:
+            return "model"
+        if self.encoding_name:
+            return "encoding"
+        return "encoding"
+
+    @property
+    def fallback_for(self) -> str | None:
+        """The model name that could not be matched and triggered fallback."""
+        return self._fallback_for
 
     def _load(self) -> None:
         """Lazily load the tokenizer encoding (import tiktoken on demand)."""
-        import tiktoken
+        try:
+            import tiktoken
+        except ImportError as exc:  # pragma: no cover - dep is required
+            self._load_error = "tiktoken is not installed"
+            raise TokenizerNotFoundError(self._load_error) from exc
 
         if self.model:
             try:
                 self._encoding = tiktoken.encoding_for_model(self.model)
-            except KeyError:  # unknown model name
-                self._encoding = tiktoken.get_encoding("cl100k_base")
+            except KeyError:
+                self._fallback_for = self.model
+                if self.strict:
+                    raise UnsupportedModelError(
+                        f"No tokenizer registered for model {self.model!r} "
+                        f"and strict=True (no fallback)."
+                    ) from None
+                self._encoding = tiktoken.get_encoding(_DEFAULT_ENCODING)
         elif self.encoding_name:
             self._encoding = tiktoken.get_encoding(self.encoding_name)
         else:
-            self._encoding = tiktoken.get_encoding("cl100k_base")
+            self._encoding = tiktoken.get_encoding(_DEFAULT_ENCODING)
 
     def _ensure_custom(self) -> bool:
         return self._count_fn is not None
@@ -72,16 +119,29 @@ class Tokenizer:
         """Return the loaded encoding, loading it on first use."""
         if self._encoding is None:
             self._load()
-        assert self._encoding is not None
+        if self._encoding is None:
+            raise TokenizerNotFoundError(self._load_error or "tokenizer unavailable")
         return self._encoding
 
     def description(self) -> str:
         """Human-readable description for metrics/benchmarks."""
         if self._count_fn is not None:
             return "custom"
+        if self._fallback_for is not None:
+            return f"{self._fallback_for} (unregistered) -> {_DEFAULT_ENCODING} (fallback)"
         if self.model:
             return f"{self.model} (tiktoken)"
-        return f"{self.encoding_name or 'cl100k_base'}|model-default (tiktoken)"
+        return f"{self.encoding_name or _DEFAULT_ENCODING} (tiktoken)"
+
+    def report(self) -> dict[str, Any]:
+        """Explicit tokenizer state report for benchmarks/metrics."""
+        return {
+            "mode": self.mode,
+            "description": self.description(),
+            "fallback_for": self.fallback_for,
+            "requested_model": self.model,
+            "encoding": self.encoding_name or _DEFAULT_ENCODING,
+        }
 
 
 def count_tokens(request: OptimizerRequest, tokenizer: Tokenizer) -> int:
@@ -125,11 +185,15 @@ class TokenOptimizer(BaseOptimizer):
             messages=messages,
             max_tokens=request.max_tokens,
             model=request.model,
+            temperature=request.temperature,
+            tools=request.tools,
+            namespace=request.namespace,
             metadata=dict(request.metadata),
         )
         optimized_tokens = count_tokens(optimized_request, self.tokenizer)
         saved = original_tokens - optimized_tokens
         reduction = (saved / original_tokens * 100.0) if original_tokens else 0.0
+        changes = ["strip prompt whitespace"] if optimized_tokens < original_tokens else []
         return OptimizerResult(
             optimized_request=optimized_request,
             original_request=request,
@@ -139,6 +203,13 @@ class TokenOptimizer(BaseOptimizer):
             optimizers_run=[self.name],
             tokens_saved=saved,
             reduction_percent=reduction,
+            changes=changes,
+            metrics={
+                "original_input_tokens": original_tokens,
+                "optimized_input_tokens": optimized_tokens,
+                "tokens_saved": saved,
+                "reduction_percentage": reduction,
+            },
             metadata={
                 "tokenizer": self.tokenizer.description(),
                 "input_tokens": original_tokens,

@@ -12,6 +12,9 @@ from opticore.hardware.base import (
     ROCmBackend,
     UnknownBackend,
 )
+from opticore.hardware.base import (
+    require_backend as require_backend,
+)
 
 _BACKENDS: list[BaseHardwareBackend] = [
     ROCmBackend(),

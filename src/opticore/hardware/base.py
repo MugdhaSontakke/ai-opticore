@@ -7,6 +7,23 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from opticore.exceptions import HardwareBackendUnavailableError
+
+
+def require_backend(backend: BaseHardwareBackend) -> HardwareInfo:
+    """Return backend info or raise ``HardwareBackendUnavailableError``.
+
+    Detection defaults to honest capability reporting (``available`` is
+    never faked). This helper is for callers that need a hard failure when
+    a backend is unavailable instead of a soft capability report.
+    """
+    info = backend.info()
+    if not info.available:
+        raise HardwareBackendUnavailableError(
+            f"Hardware backend {backend.name!r} is unavailable: {info.description}"
+        )
+    return info
+
 
 @dataclass
 class HardwareInfo:

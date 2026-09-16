@@ -93,10 +93,22 @@ class SemanticCache(BaseCache):
         self,
         text: str,
         model: str | None = None,
+        system: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        namespace: str | None = None,
     ) -> tuple[bool, CacheEntry | None]:
-        """Look up ``text``; returns (hit, entry)."""
+        """Look up ``text``; returns (hit, entry).
+
+        ``system`` and ``temperature`` are included in the semantic key to
+        prevent serving a response computed for a different system prompt or
+        generation setting.
+        """
         model = model or "unknown"
-        exact_key = self._derive_key(text, model)
+        exact_key = self._derive_key(
+            text, model, system=system, temperature=temperature,
+            max_tokens=max_tokens, namespace=namespace,
+        )
         exact = self._store.get(exact_key)
         if exact is not None:
             self.exact_hits += 1
@@ -121,6 +133,15 @@ class SemanticCache(BaseCache):
             for entry in self._entries:
                 if model and entry.model != model:
                     continue
+                meta = entry.metadata or {}
+                if system is not None and meta.get("system") != system:
+                    continue
+                if temperature is not None and meta.get("temperature") != temperature:
+                    continue
+                if max_tokens is not None and meta.get("max_tokens") != max_tokens:
+                    continue
+                if namespace is not None and meta.get("namespace") != namespace:
+                    continue
                 score = _cosine(query_embedding, entry.embedding)
                 if score >= self.threshold and score > best_score:
                     best = entry
@@ -129,7 +150,7 @@ class SemanticCache(BaseCache):
         if best is not None:
             self.semantic_hits += 1
             return True, CacheEntry(
-                key=self._derive_key(best.text, best.model),
+                key=self._derive_key(best.text, best.model, **self._entry_scope(best)),
                 content=best.content,
                 model=best.model,
                 created_at=best.created_at,
@@ -138,6 +159,16 @@ class SemanticCache(BaseCache):
             )
         self.misses += 1
         return False, None
+
+    def _entry_scope(self, entry: SemanticCacheEntry) -> dict[str, Any]:
+        """Reconstruct scope fields from an entry's stored metadata."""
+        meta = entry.metadata or {}
+        return {
+            "system": meta.get("system"),
+            "temperature": meta.get("temperature"),
+            "max_tokens": meta.get("max_tokens"),
+            "namespace": meta.get("namespace"),
+        }
 
     def set(
         self,
@@ -184,14 +215,31 @@ class SemanticCache(BaseCache):
         text: str,
         content: str,
         model: str,
+        system: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        namespace: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Store content keyed by its text (exact key + embedding index)."""
         model = model or "unknown"
         meta = dict(metadata or {})
         meta["semantic_text"] = text
+        scope = {
+            "system": system,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "namespace": namespace,
+        }
+        meta["scope"] = scope
+        for key, value in scope.items():
+            if value is not None:
+                meta[key] = value
         self.set(
-            key=self._derive_key(text, model),
+            key=self._derive_key(
+                text, model, system=system, temperature=temperature,
+                max_tokens=max_tokens, namespace=namespace,
+            ),
             content=content,
             model=model,
             ttl_seconds=self.ttl_seconds,
@@ -202,7 +250,10 @@ class SemanticCache(BaseCache):
         deleted = self._store.delete(key)
         with self._lock:
             before = len(self._entries)
-            self._entries = [e for e in self._entries if self._derive_key(e.text, e.model) != key]
+            self._entries = [
+                e for e in self._entries
+                if self._derive_key(e.text, e.model, **self._entry_scope(e)) != key
+            ]
             deleted = deleted or len(self._entries) != before
         return deleted
 
@@ -223,6 +274,21 @@ class SemanticCache(BaseCache):
         return base
 
     @staticmethod
-    def _derive_key(text: str, model: str | None) -> str:
-        blob = f"{text}|{model or ''}"
+    def _derive_key(
+        text: str,
+        model: str | None,
+        system: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        namespace: str | None = None,
+    ) -> str:
+        parts = [
+            text,
+            model or "",
+            system or "",
+            f"temp={temperature}" if temperature is not None else "temp=none",
+            f"maxt={max_tokens}" if max_tokens is not None else "maxt=none",
+            namespace or "",
+        ]
+        blob = "|".join(parts)
         return hashlib.sha256(blob.encode()).hexdigest()

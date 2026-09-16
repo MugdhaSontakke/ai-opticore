@@ -25,7 +25,7 @@ def run_cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
 def test_cli_init_and_config(tmp_path: Path) -> None:
     result = run_cli("init", cwd=tmp_path)
     assert result.returncode == 0
-    assert (tmp_path / "opticore.json").exists()
+    assert (tmp_path / "opticore.yaml").exists()
     out = run_cli("config", cwd=tmp_path)
     assert out.returncode == 0
     assert '"safety_mode"' in out.stdout
@@ -95,3 +95,50 @@ def test_cli_help_for_every_command() -> None:
 def test_cli_unknown_command_fails_gracefully() -> None:
     result = run_cli("frobnicate")
     assert result.returncode != 0
+
+
+def test_cli_benchmark_output_writes_file(tmp_path: Path) -> None:
+    out_file = tmp_path / "results.json"
+    result = run_cli(
+        "benchmark",
+        "--samples", "1", "--repeats", "1", "--provider", "fake",
+        "--output", str(out_file),
+    )
+    assert result.returncode == 0
+    assert out_file.exists()
+    payload = json.loads(out_file.read_text())
+    assert "metrics" in payload
+    assert "environment" in payload
+    assert "timestamp" in payload["environment"]
+
+
+def test_cli_benchmark_reports_overhead_and_env(tmp_path: Path) -> None:
+    out_file = tmp_path / "results.json"
+    run_cli(
+        "benchmark", "--samples", "1", "--repeats", "1", "--provider", "fake",
+        "--output", str(out_file),
+    )
+    payload = json.loads(out_file.read_text())
+    assert "optimizer_overhead_ms_avg" in payload["metrics"]
+    assert payload["environment"]["opticore_version"]
+
+
+def test_cli_benchmark_unknown_provider_clean_error() -> None:
+    result = run_cli("benchmark", "--provider", "does-not-exist")
+    assert result.returncode != 0
+    assert "Traceback" not in result.stderr
+    assert "error:" in result.stderr or "invalid choice" in result.stderr
+
+
+def test_cli_cache_command() -> None:
+    result = run_cli("cache")
+    assert result.returncode == 0
+    assert "in-memory" in result.stdout
+
+
+def test_cli_optimize_rejects_secret_config(tmp_path: Path) -> None:
+    bad_config = tmp_path / "opticore.yaml"
+    bad_config.write_text("api_key: sk-12345\n")
+    result = run_cli("optimize", "--prompt", "hi", "--config", str(bad_config))
+    assert result.returncode != 0
+    assert "Do not store API keys" in result.stderr

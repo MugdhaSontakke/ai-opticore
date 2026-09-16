@@ -81,10 +81,10 @@ flowchart LR
 
 ## Installation
 
-Requires **Python 3.11+**.
+Requires **Python 3.9+**.
 
 ```bash
-git clone https://github.com/ai-opticore/ai-opticore.git
+git clone https://github.com/MugdhaSontakke/ai-opticore.git
 cd ai-opticore
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[all]"
@@ -103,8 +103,9 @@ pip install -e ".[openai]"      # OpenAI-compatible APIs
 pip install -e ".[ollama]"      # local Ollama models
 pip install -e ".[huggingface]" # local Hugging Face models
 pip install -e ".[semantic]"    # sentence-transformers embeddings
+pip install -e ".[yaml]"        # YAML config file support
 pip install -e ".[benchmark]"   # psutil, numpy for benchmarks
-pip install -e ".[dev]"         # pytest, ruff, mypy
+pip install -e ".[dev]"         # pytest, hypothesis, ruff, mypy, pyyaml
 ```
 
 Set your API key in the environment (never commit keys):

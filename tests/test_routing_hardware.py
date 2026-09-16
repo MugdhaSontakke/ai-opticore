@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from opticore.exceptions import HardwareBackendUnavailableError
 from opticore.hardware import (
     CPUBackend,
     CUDABackend,
@@ -9,6 +10,7 @@ from opticore.hardware import (
     describe_detailed,
     detect_backend,
     list_backends,
+    require_backend,
 )
 from opticore.routing.router import ModelRouter, RouteRule, default_complexity, default_rules
 
@@ -78,3 +80,29 @@ def test_describe_detailed_is_dict() -> None:
     details = describe_detailed()
     assert "detected" in details
     assert "backends" in details
+
+
+def test_require_backend_returns_info_for_available() -> None:
+    info = require_backend(CPUBackend())
+    assert info.available is True
+    assert info.backend == "cpu"
+
+
+def test_require_backend_raises_for_unavailable() -> None:
+    import pytest
+
+    with pytest.raises(HardwareBackendUnavailableError):
+        require_backend(UnknownBackendForTest())
+
+
+class UnknownBackendForTest:
+    name = "never_available"
+
+    def info(self):  # pragma: no cover - only raised/returned, not asserted
+        from opticore.hardware.base import HardwareInfo
+
+        return HardwareInfo(
+            backend=self.name,
+            available=False,
+            description="not present",
+        )

@@ -1,0 +1,65 @@
+[
+  {
+    "id": "simple_qa",
+    "category": "simple_qa",
+    "prompt": "What is 2+2?",
+    "system": "You are a math tutor.",
+    "expected_keywords": ["4", "four"]
+  },
+  {
+    "id": "long_context_qa",
+    "category": "long_context_qa",
+    "prompt": "Based on the passage below, who invented the transistor?\n\nThe transistor was invented in 1947 at Bell Laboratories by John Bardeen, Walter Brattain, and William Shockley. It is considered one of the most important inventions of the 20th century.",
+    "system": "Answer only from the provided passage.",
+    "expected_keywords": ["bardeen", "brattain", "shockley"]
+  },
+  {
+    "id": "repeated_context",
+    "category": "repeated_context",
+    "prompt": "Please summarize the following text: The sun is the star at the center of the solar system. The sun is a massive ball of hot, glowing gases.",
+    "system": "You are a helpful summarizer.",
+    "expected_keywords": ["sun", "star"]
+  },
+  {
+    "id": "summarization",
+    "category": "summarization",
+    "prompt": "Summarize in one sentence: AI-OptiCore is an open-source optimization layer for AI and LLM applications that reduces token usage, latency, and cost while measuring trade-offs and preserving response quality.",
+    "system": "Provide concise summaries.",
+    "expected_keywords": ["optimization", "token"]
+  },
+  {
+    "id": "instruction_following",
+    "category": "instruction_following",
+    "prompt": "List exactly three primary colors, separated by commas.",
+    "system": "You are a helpful assistant. Follow instructions exactly.",
+    "expected_keywords": ["red", "blue", "yellow"]
+  },
+  {
+    "id": "structured_output",
+    "category": "structured_output",
+    "prompt": "Return a JSON object with keys: name, value. Use \"test\" for name and 42 for value.",
+    "system": "Return valid JSON only.",
+    "expected_keywords": ["name", "test", "42"]
+  },
+  {
+    "id": "tool_calling",
+    "category": "tool_calling",
+    "prompt": "What is the weather in Paris? Use the get_weather tool.",
+    "system": "You have access to tools. Always use the appropriate tool when available.",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"]
+          }
+        }
+      }
+    ],
+    "expected_keywords": ["weather", "paris"]
+  }
+]

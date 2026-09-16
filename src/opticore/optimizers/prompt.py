@@ -140,6 +140,9 @@ class PromptOptimizer(BaseOptimizer):
             messages=request.messages,
             max_tokens=request.max_tokens,
             model=request.model,
+            temperature=request.temperature,
+            tools=request.tools,
+            namespace=request.namespace,
             metadata=dict(request.metadata),
         )
         optimized_tokens = count_tokens(optimized_request, self.tokenizer)
@@ -155,6 +158,13 @@ class PromptOptimizer(BaseOptimizer):
             optimizers_run=[self.name],
             tokens_saved=saved,
             reduction_percent=reduction,
+            changes=meta["transformations"],
+            metrics={
+                "original_input_tokens": original_tokens,
+                "optimized_input_tokens": optimized_tokens,
+                "tokens_saved": saved,
+                "reduction_percentage": reduction,
+            },
             metadata={
                 "mode": mode.value,
                 "transformations": meta["transformations"],

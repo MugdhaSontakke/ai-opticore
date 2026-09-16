@@ -4,49 +4,27 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opticore.core.config import ProviderConfig
+from opticore.core.model import AIResponse, ProviderResponse
+from opticore.exceptions import ProviderAuthError, ProviderError, ProviderRateError
 from opticore.logging import get_logger
 
+if TYPE_CHECKING:
+    from opticore.core.model import AIRequest
+
+__all__ = [
+    "AIResponse",
+    "ProviderAuthError",
+    "ProviderError",
+    "ProviderRateError",
+    "ProviderResponse",
+    "BaseProvider",
+    "FakeProviderMixin",
+]
+
 logger = get_logger("opticore.providers")
-
-
-class ProviderError(Exception):
-    """Base exception for provider failures."""
-
-
-class ProviderAuthError(ProviderError):
-    """Raised when a provider reports missing/invalid credentials."""
-
-
-class ProviderRateError(ProviderError):
-    """Raised on provider-side rate limiting or quota exhaustion."""
-
-
-@dataclass
-class ProviderResponse:
-    """Normalized response returned by every provider."""
-
-    content: str
-    model: str
-    provider: str
-    input_tokens: int = 0
-    output_tokens: int = 0
-    latency_ms: float = 0.0
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "content": self.content,
-            "model": self.model,
-            "provider": self.provider,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "latency_ms": self.latency_ms,
-            "metadata": self.metadata,
-        }
 
 
 class BaseProvider(ABC):
@@ -81,8 +59,12 @@ class BaseProvider(ABC):
         return token
 
     @abstractmethod
-    def generate(self, request: dict[str, Any]) -> ProviderResponse:
+    def generate(self, request: dict[str, Any]) -> AIResponse:
         """Generate a completion for the given request dict."""
+
+    def generate_from_request(self, request: AIRequest) -> AIResponse:
+        """Generate directly from an :class:`AIRequest`."""
+        return self.generate(request.to_dict())
 
     def models(self) -> list[str]:
         """List supported model identifiers (may be populated lazily)."""
@@ -116,11 +98,11 @@ class FakeProviderMixin:
     def __init__(self) -> None:
         self.config = ProviderConfig(provider=self.name)
 
-    def generate(self, request: dict[str, Any]) -> ProviderResponse:
+    def generate(self, request: dict[str, Any]) -> AIResponse:
         model = request.get("model") or (self.config.model or "fake-model")
         prompt = request.get("prompt", "")
         content = f"fake-response-for: {prompt[:40]}"
-        return ProviderResponse(
+        return AIResponse(
             content=content,
             model=model,
             provider=f"fake:{self.name}",

@@ -10,13 +10,13 @@ import time
 from typing import Any
 
 from opticore.core.config import ProviderConfig
-from opticore.logging import get_logger
-from opticore.providers.base import (
-    BaseProvider,
+from opticore.exceptions import (
     ProviderAuthError,
     ProviderRateError,
-    ProviderResponse,
+    ProviderTimeoutError,
 )
+from opticore.logging import get_logger
+from opticore.providers.base import BaseProvider, ProviderResponse
 
 logger = get_logger("opticore.providers.openai")
 
@@ -55,7 +55,7 @@ class OpenAIProvider(BaseProvider):
         self._read_env_key(self.config.api_key_env)
 
     def generate(self, request: dict[str, Any]) -> ProviderResponse:
-        from openai import OpenAI
+        from openai import APITimeoutError, OpenAI
 
         key = self._check_api_key(self.config.api_key_env or "OPENAI_API_KEY")
         client = OpenAI(
@@ -66,15 +66,21 @@ class OpenAIProvider(BaseProvider):
         )
         req = self._normalize_request(request)
         messages = self._build_messages(req)
+        tools = req.get("tools")
         started = time.monotonic()
         try:
-            completion = client.chat.completions.create(
-                model=req["model"] or (self.config.model or "gpt-4o-mini"),
-                messages=messages,
-                max_tokens=req.get("max_tokens"),
-                temperature=req.get("temperature"),
-            )
+            kwargs: dict[str, Any] = {
+                "model": req["model"] or (self.config.model or "gpt-4o-mini"),
+                "messages": messages,
+                "max_tokens": req.get("max_tokens"),
+                "temperature": req.get("temperature"),
+            }
+            if tools:
+                kwargs["tools"] = tools
+            completion = client.chat.completions.create(**kwargs)
             elapsed_ms = (time.monotonic() - started) * 1000
+        except APITimeoutError as exc:
+            raise ProviderTimeoutError(str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - surface as ProviderError
             text = str(exc)
             if "api key" in text.lower() or "authentication" in text.lower():

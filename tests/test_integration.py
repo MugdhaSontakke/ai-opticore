@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from opticore import AIClient, OptimizationConfig, Optimizer
 from opticore.benchmarks.runner import BenchmarkRunner
 from opticore.providers.base import FakeProviderMixin, ProviderResponse
@@ -41,6 +43,7 @@ def test_aiclient_returns_generation_result() -> None:
     assert result.content
     assert result.provider == "counting_fake"
     assert provider.calls == 1
+    assert result.total_time_ms >= 0
 
 
 def test_aiclient_cache_prevents_second_call() -> None:
@@ -104,3 +107,32 @@ def test_benchmark_uses_only_real_measurements() -> None:
     result = runner.run()
     baseline = result.baseline
     assert baseline["input_tokens"] is not None or baseline["latency_ms"] is not None
+
+
+def test_benchmark_result_to_dict_contains_metadata() -> None:
+    provider = CountingFakeProvider()
+    runner = BenchmarkRunner(provider=provider, model="m", repeats=1)
+    result = runner.run()
+    data = result.to_dict()
+    env = data["environment"]
+    assert "timestamp" in env
+    assert "opticore_version" in env
+    assert "python_version" in env
+    assert "os" in env
+    assert data["provider"] == "counting_fake"
+    assert "optimizer_overhead_ms_avg" in data["metrics"]
+    serialized = json.dumps(data, default=str)
+    assert isinstance(serialized, str)
+
+
+def test_generation_result_to_dict_has_total_tokens_and_overhead() -> None:
+
+    provider = CountingFakeProvider()
+    client = AIClient(provider=provider, optimization=True)
+    result = client.generate(prompt="hello")
+    d = result.to_dict()
+    assert "total_tokens" in d
+    assert "optimizer_time_ms" in d
+    assert "model_time_ms" in d
+    assert d["total_tokens"] == d["input_tokens"] + d["output_tokens"]
+    assert d["reduction_percentage"] >= 0.0

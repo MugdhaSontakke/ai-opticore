@@ -25,6 +25,27 @@ class CacheEntry:
         return self.expires_at is not None and time.monotonic() > self.expires_at
 
 
+@dataclass
+class CachePolicy:
+    """Policies for serving cached entries.
+
+    The default is conservative: stale entries are never served. Semantics
+    that are clearly time-sensitive should either raise their TTL expectation
+    or disable caching for specific requests (e.g. ``metadata["no_cache"]``).
+    """
+
+    serve_stale_for_seconds: float = 0.0
+    """How long past TTL an entry may still be served (0 disables)."""
+
+    def allows_stale(self, entry: CacheEntry) -> bool:
+        """Return True when a stale entry may still be served under policy."""
+        if not entry.expired or entry.expires_at is None:
+            return False
+        if self.serve_stale_for_seconds <= 0:
+            return False
+        return time.monotonic() <= entry.expires_at + self.serve_stale_for_seconds
+
+
 class BaseCache(ABC):
     """Storage-agnostic cache interface."""
 
@@ -133,11 +154,32 @@ class MemoryCache(BaseCache):
             }
 
 
-def cache_key(*, prompt: str, system: str | None = None, model: str | None = None) -> str:
-    """Deterministic exact-match key for a request."""
+def cache_key(
+    *,
+    prompt: str,
+    system: str | None = None,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    namespace: str | None = None,
+) -> str:
+    """Deterministic exact-match key isolating all cache-relevant fields.
+
+    Temperature and max_tokens are included because two identical prompts
+    served with different generation parameters may return substantially
+    different outputs; caching across them would be incorrect.
+    """
     import hashlib
 
-    blob = f"{prompt}|{system or ''}|{model or ''}"
+    parts = [
+        prompt,
+        system or "",
+        model or "",
+        f"temp={temperature}" if temperature is not None else "temp=none",
+        f"maxt={max_tokens}" if max_tokens is not None else "maxt=none",
+        namespace or "",
+    ]
+    blob = "|".join(parts)
     return hashlib.sha256(blob.encode()).hexdigest()
 
 

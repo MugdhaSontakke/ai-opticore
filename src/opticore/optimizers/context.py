@@ -57,6 +57,9 @@ class ContextOptimizer(BaseOptimizer):
                 messages=None,
                 max_tokens=request.max_tokens,
                 model=request.model,
+                temperature=request.temperature,
+                tools=request.tools,
+                namespace=request.namespace,
                 metadata=dict(request.metadata),
             )
             return self._result(request, optimized_request, original_tokens, meta, config)
@@ -106,6 +109,9 @@ class ContextOptimizer(BaseOptimizer):
             messages=messages,
             max_tokens=request.max_tokens,
             model=request.model,
+            temperature=request.temperature,
+            tools=request.tools,
+            namespace=request.namespace,
             metadata=dict(request.metadata),
         )
         return self._result(request, optimized_request, original_tokens, meta, config)
@@ -137,6 +143,13 @@ class ContextOptimizer(BaseOptimizer):
         optimized_tokens = count_tokens(optimized_request, self.tokenizer)
         saved = max(0, original_tokens - optimized_tokens)
         reduction = (saved / original_tokens * 100.0) if original_tokens else 0.0
+        changes: list[str] = []
+        if meta.get("duplicate_messages"):
+            changes.append(f"removed {meta['duplicate_messages']} duplicate message(s)")
+        if meta.get("dropped_messages"):
+            changes.append(f"dropped {meta['dropped_messages']} oldest message(s) over budget")
+        if meta.get("system_truncated"):
+            changes.append("truncated oversized system prompt (non-SAFE mode)")
         return OptimizerResult(
             optimized_request=optimized_request,
             original_request=request,
@@ -146,5 +159,12 @@ class ContextOptimizer(BaseOptimizer):
             optimizers_run=[self.name],
             tokens_saved=saved,
             reduction_percent=reduction,
+            changes=changes,
+            metrics={
+                "original_input_tokens": original_tokens,
+                "optimized_input_tokens": optimized_tokens,
+                "tokens_saved": saved,
+                "reduction_percentage": reduction,
+            },
             metadata=meta,
         )

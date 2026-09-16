@@ -1,32 +1,36 @@
-"""Core interfaces and data structures for AI-OptiCore."""
+"""Core interfaces for AI-OptiCore.
+
+The canonical data model lives in :mod:`opticore.core.model`. Here we keep the
+optimizer/pipeline interfaces and the backward-compatible request name.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from opticore.core.model import AIRequest, AIResponse, OptimizerRequest
 
-@dataclass
-class OptimizerRequest:
-    """The normalized request object flowing through the pipeline.
-
-    Optimizers transform this object; they never mutate caller-owned data.
-    """
-
-    prompt: str
-    system: str | None = None
-    messages: list[dict[str, str]] | None = None
-    max_tokens: int | None = None
-    model: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+__all__ = [
+    "AIRequest",
+    "AIResponse",
+    "OptimizerRequest",
+    "OptimizerResult",
+    "ModelProvider",
+    "HardwareBackend",
+    "Optimizer",
+]
 
 
 @dataclass
 class OptimizerResult:
     """The result of running one or more optimizers on a request.
 
-    ``optimized_request`` contains the transformed request. The original
-    request is retained unchanged on ``original_request``.
+    - ``optimized_request`` contains the transformed request.
+    - ``original_request`` is the untouched caller-owned request.
+    - ``changes`` is an auditable list of what each optimizer modified.
+    - ``metrics`` uses canonical token keys (see :func:`opticore.benchmarks
+      .metrics.token_metrics`).
     """
 
     optimized_request: OptimizerRequest
@@ -37,19 +41,17 @@ class OptimizerResult:
     optimizers_run: list[str] = field(default_factory=list)
     tokens_saved: int = 0
     reduction_percent: float = 0.0
+    changes: list[str] = field(default_factory=list)
+    metrics: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ModelProvider(Protocol):
-    """Protocol for language model providers.
-
-    Implementers must also expose their capability metadata. The abstract
-    base class in providers/base.py provides a convenient starting point.
-    """
+    """Protocol for language model providers."""
 
     name: str
 
-    def generate(self, request: dict[str, Any]) -> dict[str, Any]:
+    def generate(self, request: dict[str, Any]) -> AIResponse:
         """Generate a response for a request.
 
         Args:
@@ -57,8 +59,7 @@ class ModelProvider(Protocol):
                 ``max_tokens``, ``model``.
 
         Returns:
-            A dict with ``content``, ``model``, ``provider``, ``input_tokens``,
-            ``output_tokens`` and ``metadata``.
+            An :class:`AIResponse` with content and usage data.
         """
 
 
@@ -77,7 +78,7 @@ class HardwareBackend(Protocol):
 class Optimizer(Protocol):
     """Protocol for pipeline optimizers.
 
-    Every optimizer must expose ``name`` and ``optimize``; see
+    Every optimizer must expose ``name``, ``order`` and ``optimize``; see
     optimizers.base.BaseOptimizer for the reference implementation.
     """
 

@@ -88,3 +88,29 @@ def accumulate_tokens(collector: MetricsCollector, original: int, optimized: int
     collector.incr("tokens_saved", max(0, original - optimized))
     if original:
         collector.record("reduction_percent", (original - optimized) / original * 100.0)
+
+
+def token_metrics(
+    original_input: int,
+    optimized_input: int,
+    output_tokens: int | None = None,
+) -> dict[str, Any]:
+    """Canonical token metric keys used across pipeline, API and benchmarks.
+
+    ``output_tokens`` is optional: pipelines cannot know it before a provider
+    responds, so downstream code passes the real value when available.
+    """
+    saved = max(0, original_input - optimized_input)
+    total = optimized_input + output_tokens if output_tokens is not None else None
+    metrics: dict[str, Any] = {
+        "original_input_tokens": original_input,
+        "optimized_input_tokens": optimized_input,
+        "tokens_saved": saved,
+        "reduction_percentage": round(
+            (saved / original_input * 100.0) if original_input else 0.0, 4
+        ),
+    }
+    if output_tokens is not None:
+        metrics["output_tokens"] = output_tokens
+        metrics["total_tokens"] = total
+    return metrics
