@@ -81,7 +81,7 @@ class OllamaProvider(BaseProvider):
         import requests  # type: ignore[import-untyped]
 
         url = f"{self.base_url.rstrip('/')}/api/chat"
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "options": {

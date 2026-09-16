@@ -113,7 +113,7 @@ class Tokenizer:
         if self._count_fn is not None:
             return []
         encoding = self._resolve_encoding()
-        return encoding.encode(text)
+        return list(encoding.encode(text))
 
     def _resolve_encoding(self) -> tiktoken.Encoding:
         """Return the loaded encoding, loading it on first use."""
