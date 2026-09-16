@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-opticore"
+version = "0.1.0"
+description = "An open-source optimization layer for AI/LLM applications"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "AI-OptiCore Contributors" }]
+keywords = ["ai", "llm", "optimization", "token", "cache", "inference"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "tiktoken>=0.7.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
+ollama = ["ollama>=0.4.0"]
+huggingface = ["transformers>=4.30.0", "torch>=2.0.0"]
+semantic = ["sentence-transformers>=2.2.0", "numpy>=1.24.0"]
+benchmark = ["psutil>=5.9.0", "numpy>=1.24.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.0.0",
+]
+all = [
+    "ai-opticore[openai,ollama,huggingface,semantic,benchmark,dev]",
+]
+
+[project.scripts]
+ai-opticore = "opticore.cli.main:cli"
+
+[project.urls]
+Homepage = "https://github.com/ai-opticore/ai-opticore"
+Documentation = "https://ai-opticore.readthedocs.io"
+Repository = "https://github.com/ai-opticore/ai-opticore"
+Issues = "https://github.com/ai-opticore/ai-opticore/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/opticore"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

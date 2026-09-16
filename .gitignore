@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.so
+
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# Test / tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Benchmarks & artifacts
+*.jsonl
+*.parquet
+opti_benchmark_*.json
+benchmark-results/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Dashboard
+dashboard/node_modules/
+dashboard/dist/
+
+# Logs
+*.log
