@@ -4,6 +4,24 @@
 > Evidence basis: actual repository contents, `pytest` (75 passing), `ruff`,
 > `mypy`, and a `pytest --cov` run on commit `1546da0`.
 
+> **Update (hardening pass complete, commit `4830695` / `afeabf2`):**
+> The gap areas identified below were addressed in the hardening pass:
+> unified `AIRequest`/`AIResponse` model with `temperature`/`tools`/`namespace`;
+> per-optimizer `changes` audit trail; canonical `token_metrics()` keys; quality
+> gate wired into the pipeline with safe fallback; typed exception hierarchy;
+> eager config validation with YAML/JSON + `OPTICORE_*` overrides and secret-key
+> rejection; cache-key isolation (system/model/temperature/max_tokens/namespace)
+> incl. semantic-cache scoping; `RedactingFilter` that actually redacts; provider
+> timeout/auth error mapping; optimizer-overhead + model timing with benchmark
+> environment fingerprint and JSON export; honest CLI error handling; coverage
+> gate (>=70%) wired into CI. Verification after the pass: **131 tests passing**,
+> `ruff` clean, `mypy` (latest) clean, coverage **73.6%** (> gate), wheel + sdist
+> build clean (`python -m build` + `twine check`), wheel smoke-tested in a fresh
+> venv, and all CI jobs green (test 3.9/3.11/3.12, build, cli-smoke, security:
+> `pip-audit` + gitleaks, CodeQL). Remaining items are tracked as GitHub issues
+> #1–#11 and Roadmap items (redis/disk cache, evaluator plugins, OSS metrics,
+> per-component timing).
+
 This report is a factual assessment of what actually exists in the repository.
 It does not assume that a feature works because a file or interface exists.
 
@@ -303,7 +321,7 @@ reported as pure latency benefit)
 
 **Evidence**
 
-- 75 tests pass on Python 3.9 (project targets 3.11+; tests run with a
+- 75 tests pass on Python 3.9 (project targets >=3.9; tests run with a
   `conftest.py` sys.path shim because the local pip cannot editable-install
   hatchling packages).
 - `ruff` clean, `mypy` clean (35 files).
@@ -384,10 +402,13 @@ reported as pure latency benefit)
 **Evidence**
 
 - `pyproject.toml`: hatchling backend, `ai-opticore` console script, extras
-  (`openai`, `ollama`, `huggingface`, `semantic`, `benchmark`, `dev`, `all`),
-  license/readme/classifiers set, requires-python `>=3.11`.
-- `python -m build` has **never been run** locally; no missing extras (`yaml`,
-  `redis`); no `pydantic` usage despite being a hard dependency.
+  (`openai`, `ollama`, `huggingface`, `semantic`, `yaml`, `benchmark`, `dev`,
+  `all`), license/readme/classifiers set, requires-python `>=3.9` (was `>=3.11`
+  at audit time; corrected during hardening).
+- `python -m build` and clean-venv wheel install are now verified (see the
+  update note above); `yaml` extra added; `redis` extra intentionally withheld
+  until a Redis backend exists; `pydantic` remains a dependency (used by
+  `core/config.py`).
 
 **Required work**
 
