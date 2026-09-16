@@ -35,7 +35,8 @@ def test_config_rejects_out_of_range_threshold() -> None:
 
 
 def test_config_rejects_unknown_safety_mode() -> None:
-    with pytest.raises(ValueError):
+    # ConfigurationError (not a leaked ValueError) so CLI/API surfaces a clean error.
+    with pytest.raises(ConfigurationError):
         OptimizationConfig(safety_mode="nuclear")
 
 

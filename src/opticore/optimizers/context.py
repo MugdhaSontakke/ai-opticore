@@ -80,20 +80,27 @@ class ContextOptimizer(BaseOptimizer):
             messages = unique
 
         # 2. Trim from the oldest messages when over budget.
-        if messages and config.max_token_budget:
-            current = self.tokenizer.count(prompt or "")
-            if system:
-                current += self.tokenizer.count(system)
-            remaining_budget = config.max_token_budget - current
-            kept: list[dict[str, str]] = []
-            for msg in reversed(messages):
-                cost = self.tokenizer.count(msg.get("content", ""))
-                if remaining_budget - cost < 0:
-                    meta["dropped_messages"] += 1
-                    continue
-                remaining_budget -= cost
-                kept.append(msg)
-            messages = list(reversed(kept))
+        # A budget of 0 means "no conversational context allowed" (the system
+        # message and current prompt are the only retained content).
+        if messages:
+            budget = config.max_token_budget
+            if budget == 0:
+                meta["dropped_messages"] += len(messages)
+                messages = []
+            elif budget:
+                current = self.tokenizer.count(prompt or "")
+                if system:
+                    current += self.tokenizer.count(system)
+                remaining_budget = budget - current
+                kept: list[dict[str, str]] = []
+                for msg in reversed(messages):
+                    cost = self.tokenizer.count(msg.get("content", ""))
+                    if remaining_budget - cost < 0:
+                        meta["dropped_messages"] += 1
+                        continue
+                    remaining_budget -= cost
+                    kept.append(msg)
+                messages = list(reversed(kept))
 
         # 3. Truncate an oversized system prompt only in non-SAFE modes.
         if system:

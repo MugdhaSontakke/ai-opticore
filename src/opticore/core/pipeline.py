@@ -19,17 +19,18 @@ and skipped. Token metrics are aggregated under canonical key names.
 
 from __future__ import annotations
 
-import logging
+import time
 from typing import Any
 
 from opticore.benchmarks.metrics import token_metrics
 from opticore.core.config import OptimizationConfig
 from opticore.core.interfaces import Optimizer, OptimizerResult
 from opticore.core.model import AIRequest
-from opticore.exceptions import OptimizationError
+from opticore.exceptions import OptimizationError, QualityEvaluationError
+from opticore.logging import get_logger, log_prompt_content
 from opticore.optimizers.token import Tokenizer, count_tokens
 
-logger = logging.getLogger("opticore.pipeline")
+logger = get_logger("opticore.pipeline")
 
 
 class OptimizationPipeline:
@@ -75,25 +76,35 @@ class OptimizationPipeline:
         changes: list[str] = []
         result_meta: dict[str, Any] = {}
         optimizer_errors: list[str] = []
+        timing: dict[str, float] = {}
+        optimization_time_ms = 0.0
         for optimizer in self.optimizers:
             if not self._is_enabled(optimizer.name):
                 continue
+            if getattr(optimizer, "enabled", True) is False:
+                logger.debug("optimizer %s disabled", optimizer.name)
+                continue
+            started = time.monotonic()
             try:
                 outcome = optimizer.optimize(current, self.config)
             except OptimizationError as exc:
                 optimizer_errors.append(f"{optimizer.name}: {exc}")
                 logger.warning("optimizer %s skipped: %s", optimizer.name, exc)
                 continue
+            elapsed_ms = (time.monotonic() - started) * 1000.0
+            timing[outcome.optimizer_name or optimizer.name] = round(elapsed_ms, 3)
+            optimization_time_ms += elapsed_ms
             current = outcome.optimized_request
             names_run.append(outcome.optimizer_name)
             changes.extend(outcome.changes)
             if outcome.metadata:
                 result_meta[outcome.optimizer_name] = outcome.metadata
             logger.debug(
-                "optimizer=%s tokens=%d->%d",
+                "optimizer=%s tokens=%d->%d time_ms=%.2f",
                 outcome.optimizer_name,
                 outcome.original_tokens,
                 outcome.optimized_tokens,
+                elapsed_ms,
             )
 
         original_token_count = count_tokens(request, self.tokenizer)
@@ -102,6 +113,8 @@ class OptimizationPipeline:
         # Quality gate with safe fallback.
         quality = self._run_quality_gate(request, current)
         result_meta["quality"] = quality
+        accepted = True
+        rejection_reason: str | None = None
         if quality.get("rejected"):
             logger.info(
                 "quality gate rejected optimization "
@@ -110,6 +123,11 @@ class OptimizationPipeline:
                 self.config.quality_minimum_score,
             )
             current = request
+            accepted = False
+            rejection_reason = (
+                f"quality similarity {quality.get('similarity', 0):.3f} below "
+                f"minimum {self.config.quality_minimum_score}"
+            )
             changes.append(
                 "quality gate failed; reverted to original request "
                 f"(similarity {quality.get('similarity', 0):.3f})"
@@ -117,6 +135,17 @@ class OptimizationPipeline:
 
         if optimizer_errors:
             result_meta["optimizer_errors"] = optimizer_errors
+        result_meta["optimizer_time_ms"] = round(optimization_time_ms, 3)
+        if timing:
+            result_meta["optimizer_time_by_step_ms"] = timing
+
+        if self.config.log_prompts:
+            log_prompt_content(
+                logger, "original", request.prompt or "", enabled=True
+            )
+            log_prompt_content(
+                logger, "optimized", current.prompt or "", enabled=True
+            )
 
         return OptimizerResult(
             optimized_request=current,
@@ -135,6 +164,9 @@ class OptimizationPipeline:
             changes=changes,
             metrics=token_metrics(original_token_count, optimized_token_count),
             metadata=result_meta,
+            optimization_time_ms=round(optimization_time_ms, 3),
+            accepted=accepted,
+            rejection_reason=rejection_reason,
         )
 
     def _run_quality_gate(
@@ -163,23 +195,46 @@ class OptimizationPipeline:
             "similarity": round(similarity, 4),
             "minimum_score": self.config.quality_minimum_score,
             "rejected": rejected,
-            "evaluator": "character_similarity",
+            "evaluator": (self.config.quality_evaluator or "character").lower(),
         }
 
     def _quality_evaluator(self) -> Any:
-        """Return a callable evaluator or None if unavailable/disabled."""
-        kind = (self.config.quality_evaluator or "character").lower()
-        from opticore.evaluation.evaluator import CharacterSimilarity
+        """Resolve the configured evaluator to a callable.
 
-        if kind in ("character", "character_similarity"):
-            return CharacterSimilarity().similarity
-        return None
+        Raises :class:`QualityEvaluationError` when an unknown evaluator name
+        is configured so misconfiguration fails loudly instead of silently
+        skipping quality verification.
+        """
+        kind = (self.config.quality_evaluator or "character").lower()
+        from opticore.evaluation.evaluator import (
+            CharacterSimilarity,
+            TokenJaccardSimilarity,
+        )
+
+        evaluators = {
+            "character": CharacterSimilarity,
+            "character_similarity": CharacterSimilarity,
+            "token_jaccard": TokenJaccardSimilarity,
+        }
+        evaluator_cls = evaluators.get(kind)
+        if evaluator_cls is None:
+            raise QualityEvaluationError(
+                "Unknown quality evaluator "
+                f"{self.config.quality_evaluator!r}. Supported: "
+                + ", ".join(sorted(evaluators))
+            )
+        return evaluator_cls().similarity
 
     @staticmethod
     def _request_text(request: AIRequest) -> str:
         parts = [request.prompt or ""]
         if request.system:
             parts.append(request.system)
+        if request.messages:
+            for msg in request.messages:
+                role = msg.get("role", "user")
+                content = str(msg.get("content", ""))
+                parts.append(f"{role}: {content}")
         return "\n".join(parts)
 
     def _is_enabled(self, name: str) -> bool:

@@ -23,6 +23,9 @@ classifiers = [
 ]
 dependencies = [
     "tiktoken>=0.7.0",
+    # YAML config support is required: `ai-opticore init` writes opticore.yaml
+    # and the CLI reads it by default.
+    "pyyaml>=6.0.0",
     # requests/urllib3 are transitive deps of tiktoken. Patched releases
     # (requests 2.33, urllib3 2.7) require Python >=3.10; Python 3.9 (EOL)
     # has no upstream fix available, so the pin is interpreter-gated.

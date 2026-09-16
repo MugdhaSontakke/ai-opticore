@@ -28,7 +28,7 @@ A feature that is not listed here is *experimental* or *planned*, not promised.
 | Provider abstraction | `BaseProvider` with `generate`, `models`, `health`, timeouts, auth/rate/timeout errors, fake provider for CI. |
 | Basic provider integration | OpenAI-compatible endpoints. Ollama and Hugging Face remain stubs usable via interface, validated against fakes only. |
 | Benchmark framework | Baseline vs optimized, optimizer overhead measured separately, JSON export, reproducible metadata (timestamp, versions, OS, model, provider, hardware, config, tokenizer). No fabricated numbers — `N/A` when unknown. |
-| Quality/evaluation framework | Request-level quality gate wired into the pipeline; `reject_on_failure` falls back to the original request; "quality not verified" stated explicitly when no evaluator is configured. |
+| Quality/evaluation framework | Request-level quality gate wired into the pipeline; similarity evaluates prompt *and* conversation `messages`; `reject_on_failure` falls back to the original request with an explicit `rejection_reason`; unknown evaluator names raise `QualityEvaluationError` (fail closed, never fail open); "quality not verified" stated explicitly when no evaluator is configured. |
 | CLI | `ai-opticore init|config|hardware|models|optimize|benchmark` with `--help`, useful errors, exit codes, no sensitive data. |
 | Python API | `from opticore import Optimizer, AIClient` — small public surface; public / internal / experimental separation documented. |
 | Security basics | No secrets committed; secret values never logged (functional redaction); no external telemetry; prompt content not logged by default. |
@@ -62,6 +62,7 @@ A feature that is not listed here is *experimental* or *planned*, not promised.
 2. Costs are visible: token change, latency change, and optimizer overhead are
    reported separately.
 3. The cache cannot cross isolation boundaries (`model`, `system`,
-   `temperature`, `namespace`).
+   `temperature`, `namespace`) and is bounded in memory (bounded index with
+   oldest-entry eviction, optional serve-stale duration via `CachePolicy`).
 4. Errors are typed and actionable; no silent swallowing.
 5. Nothing is claimed in docs that is not implemented and tested.

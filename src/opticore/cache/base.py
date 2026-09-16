@@ -84,13 +84,21 @@ class BaseCache(ABC):
 
 
 class MemoryCache(BaseCache):
-    """Thread-safe in-memory cache."""
+    """Thread-safe in-memory cache.
+
+    An optional :class:`CachePolicy` controls stale-serving; by default stale
+    entries are never served. When ``max_entries`` is reached the oldest entry
+    (by ``created_at``) is evicted.
+    """
 
     name = "memory"
 
-    def __init__(self, max_entries: int = 10_000) -> None:
+    def __init__(
+        self, max_entries: int = 10_000, policy: CachePolicy | None = None
+    ) -> None:
         self._store: dict[str, CacheEntry] = {}
         self._max_entries = max_entries
+        self._policy = policy or CachePolicy()
         self._lock = threading.RLock()
         self.hits = 0
         self.misses = 0
@@ -102,6 +110,9 @@ class MemoryCache(BaseCache):
                 self.misses += 1
                 return None
             if entry.expired:
+                if self._policy.allows_stale(entry):
+                    self.hits += 1
+                    return entry
                 del self._store[key]
                 self.misses += 1
                 return None

@@ -44,6 +44,9 @@ class OptimizeOutcome:
     changes: list[str] = field(default_factory=list)
     quality_verified: bool = False
     warnings: list[str] = field(default_factory=list)
+    optimization_time_ms: float = 0.0
+    accepted: bool = True
+    rejection_reason: str | None = None
 
     @property
     def warnings_text(self) -> str:
@@ -104,6 +107,9 @@ class Optimizer:
             changes=result.changes,
             quality_verified=quality_verified,
             warnings=warnings,
+            optimization_time_ms=round(result.optimization_time_ms, 3),
+            accepted=result.accepted,
+            rejection_reason=result.rejection_reason,
         )
 
 

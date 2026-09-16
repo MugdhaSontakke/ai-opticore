@@ -20,6 +20,7 @@ from typing import Any
 
 from opticore import __version__
 from opticore.benchmarks.metrics import MetricsCollector, accumulate_tokens
+from opticore.cache.base import MemoryCache, cache_key
 from opticore.core.config import OptimizationConfig
 from opticore.core.interfaces import OptimizerRequest
 from opticore.core.pipeline import build_default_pipeline
@@ -132,13 +133,18 @@ class BenchmarkRunner:
         collector = MetricsCollector()
         optimizer_times: list[float] = []
         tokenizer = Tokenizer()
+        self._cache: MemoryCache | None = (
+            MemoryCache() if self.config.enable_semantic_cache else None
+        )
+        cache_hits = 0
+        cache_misses = 0
         if getattr(self.provider, "name", "").startswith("fake"):
             self.provider_notes.append("deterministic fake provider; latency is not representative")
 
         for request in self.samples:
             for _ in range(self.repeats):
                 base_input_tokens = self._request_tokens(request, tokenizer)
-                latency, out_tokens = self._call(request)
+                latency, out_tokens, _ = self._call(request)
                 baseline_metrics["latency_ms"].append(latency)
                 baseline_metrics["output_tokens"].append(out_tokens)
                 baseline_metrics["input_tokens"].append(base_input_tokens)
@@ -159,12 +165,45 @@ class BenchmarkRunner:
                     pipeline_result.optimized_tokens,
                 )
 
-                opt_latency, opt_out = self._call(optimized_request)
+                opt_latency = 0.0
+                opt_out = 0.0
+                if self._cache is not None:
+                    key = cache_key(
+                        prompt=optimized_request.prompt,
+                        system=optimized_request.system,
+                        model=self.model,
+                    )
+                    lookup_started = time.monotonic()
+                    entry = self._cache.get(key)
+                    if entry is not None:
+                        cache_hits += 1
+                        opt_latency = (time.monotonic() - lookup_started) * 1000.0
+                        opt_out = float(entry.metadata.get("output_tokens", 0))
+                    else:
+                        cache_misses += 1
+                        opt_latency, opt_out, content = self._call(optimized_request)
+                        try:
+                            self._cache.set(
+                                key,
+                                content,
+                                self.model,
+                                metadata={"output_tokens": opt_out},
+                            )
+                        except Exception:  # noqa: BLE001 - cache must not break benchmark
+                            logger.warning("cache write failed during benchmark")
+                else:
+                    opt_latency, opt_out, _ = self._call(optimized_request)
                 optimized_metrics["latency_ms"].append(opt_latency)
                 optimized_metrics["output_tokens"].append(opt_out)
                 optimized_metrics["input_tokens"].append(
                     pipeline_result.optimized_tokens
                 )
+
+        if cache_hits:
+            self.provider_notes.append(
+                "optimized run served some requests from the cache "
+                "(cache hits have ~zero model latency)"
+            )
 
         benchmark = BenchmarkResult(
             model=self.model,
@@ -192,10 +231,15 @@ class BenchmarkRunner:
         base_lat = benchmark.baseline["latency_ms"]
         opt_lat = benchmark.optimized["latency_ms"]
 
+        total_cache = cache_hits + cache_misses
         benchmark.metrics = {
             "token_reduction_percent": _percent(base_in, opt_in),
             "latency_change_percent": _percent_change(base_lat, opt_lat),
-            "cache_hit_rate": "N/A",
+            "cache_hit_rate": (
+                f"{cache_hits / total_cache * 100:.1f}%" if total_cache else "N/A"
+            ),
+            "cache_hits": cache_hits,
+            "cache_misses": cache_misses,
             "optimizer_overhead_ms_avg": _avg(optimizer_times),
             "avg_tokens_saved_per_request": max(0, (base_in or 0) - (opt_in or 0)),
             "summary": collector.summary(),
@@ -210,7 +254,7 @@ class BenchmarkRunner:
             )
         return benchmark
 
-    def _call(self, request: Any) -> tuple[float, float]:
+    def _call(self, request: Any) -> tuple[float, float, str]:
         payload = {
             "prompt": request.prompt,
             "system": request.system,
@@ -220,7 +264,7 @@ class BenchmarkRunner:
         started = time.monotonic()
         response: ProviderResponse = self.provider.generate(payload)
         elapsed_ms = (time.monotonic() - started) * 1000
-        return elapsed_ms, float(response.output_tokens)
+        return elapsed_ms, float(response.output_tokens), response.content
 
     @staticmethod
     def _request_tokens(request: OptimizerRequest, tokenizer: Tokenizer) -> int:

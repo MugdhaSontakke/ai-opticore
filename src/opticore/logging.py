@@ -53,6 +53,20 @@ class RedactingFilter(logging.Filter):
         return out
 
 
+def log_prompt_content(
+    logger: logging.Logger, label: str, prompt: str, *, enabled: bool = LOG_PROMPTS
+) -> None:
+    """Log raw prompt content at DEBUG level when explicitly enabled.
+
+    Prompts are never logged by default (privacy-first). Opt in via the
+    ``OPTICORE_LOG_PROMPTS=1`` environment variable or the
+    ``log_prompts`` configuration flag. Secrets inside the text are still
+    redacted by :class:`RedactingFilter`.
+    """
+    if enabled and prompt:
+        logger.debug("[prompt:%s] %s", label, prompt)
+
+
 def get_logger(name: str) -> logging.Logger:
     """Return a configured logger instance for the given module name."""
     logger = logging.getLogger(name)

@@ -74,11 +74,13 @@ class SemanticCache(BaseCache):
         threshold: float = 0.90,
         ttl_seconds: float | None = None,
         store: BaseCache | None = None,
+        max_entries: int = 10_000,
     ) -> None:
         self.embedding_fn = embedding_fn
         self.threshold = threshold
         self.ttl_seconds = ttl_seconds
         self._store = store or MemoryCache()
+        self._max_entries = max_entries
         self._entries: list[SemanticCacheEntry] = []
         self._lock = threading.RLock()
         self.semantic_hits = 0
@@ -198,6 +200,11 @@ class SemanticCache(BaseCache):
         self._store.set(key, content, model, ttl_seconds=ttl, metadata=metadata or {})
         if text:
             with self._lock:
+                # Bound the semantic index so it cannot grow without limit in
+                # long-running processes. The oldest entry is evicted first.
+                if len(self._entries) >= self._max_entries:
+                    self._entries.sort(key=lambda e: e.created_at)
+                    del self._entries[: max(1, len(self._entries) - self._max_entries + 1)]
                 self._entries.append(
                     SemanticCacheEntry(
                         text=text,

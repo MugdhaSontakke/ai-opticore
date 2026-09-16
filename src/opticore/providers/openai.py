@@ -52,18 +52,27 @@ class OpenAIProvider(BaseProvider):
             self.config.model = model
         if self.config.api_key_env is None:
             self.config.api_key_env = "OPENAI_API_KEY"
+        self._client: Any = None
         self._read_env_key(self.config.api_key_env)
 
-    def generate(self, request: dict[str, Any]) -> ProviderResponse:
-        from openai import APITimeoutError, OpenAI
+    def _get_client(self) -> Any:
+        """Return a lazily-created, reusable OpenAI client."""
+        from openai import OpenAI
 
-        key = self._check_api_key(self.config.api_key_env or "OPENAI_API_KEY")
-        client = OpenAI(
-            api_key=key,
-            base_url=self.config.base_url,
-            timeout=self.config.timeout_seconds,
-            max_retries=self.config.max_retries,
-        )
+        if self._client is None:
+            key = self._check_api_key(self.config.api_key_env or "OPENAI_API_KEY")
+            self._client = OpenAI(
+                api_key=key,
+                base_url=self.config.base_url,
+                timeout=self.config.timeout_seconds,
+                max_retries=self.config.max_retries,
+            )
+        return self._client
+
+    def generate(self, request: dict[str, Any]) -> ProviderResponse:
+        from openai import APITimeoutError
+
+        client = self._get_client()
         req = self._normalize_request(request)
         messages = self._build_messages(req)
         tools = req.get("tools")

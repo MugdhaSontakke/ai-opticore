@@ -44,6 +44,12 @@ class OptimizerResult:
     changes: list[str] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    optimization_time_ms: float = 0.0
+    """Wall-clock time spent optimizing (excluding model/provider time)."""
+    accepted: bool = True
+    """False when the quality gate rejected the optimized request."""
+    rejection_reason: str | None = None
+    """Why the optimization was rejected (set when ``accepted`` is False)."""
 
 
 class ModelProvider(Protocol):

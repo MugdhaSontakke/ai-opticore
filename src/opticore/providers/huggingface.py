@@ -64,13 +64,17 @@ class HuggingFaceProvider(BaseProvider):
         assert self._pipeline is not None
         req = self._normalize_request(request)
         prompt = req.get("prompt") or ""
+        temperature = req.get("temperature")
+        max_new_tokens = req.get("max_tokens") or 128
+        kwargs: dict[str, Any] = {
+            "max_new_tokens": max_new_tokens,
+            "do_sample": temperature is not None,
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
         started = time.monotonic()
         try:
-            outputs = self._pipeline(
-                prompt,
-                max_new_tokens=req.get("max_tokens") or 128,
-                do_sample=False,
-            )
+            outputs = self._pipeline(prompt, **kwargs)
             elapsed_ms = (time.monotonic() - started) * 1000
         except Exception as exc:  # noqa: BLE001
             raise ProviderError(f"HuggingFace generation failed: {exc}") from exc
@@ -82,11 +86,32 @@ class HuggingFaceProvider(BaseProvider):
             content=content,
             model=model,
             provider=self.name,
-            input_tokens=len(prompt.split()),
-            output_tokens=len(content.split()) if content else 0,
+            input_tokens=self._count_tokens(prompt),
+            output_tokens=self._count_tokens(content) if content else 0,
             latency_ms=elapsed_ms,
-            metadata={"device": self.device, "loaded": True},
+            metadata={
+                "device": self.device,
+                "loaded": True,
+                "token_counts": "tokenizer"
+                if self._tokenizer_available()
+                else "unmeasured",
+                "sampling": "sampled" if temperature is not None else "greedy",
+            },
         )
+
+    def _tokenizer_available(self) -> bool:
+        tokenizer = getattr(self._pipeline, "tokenizer", None)
+        return tokenizer is not None and hasattr(tokenizer, "encode")
+
+    def _count_tokens(self, text: str) -> int:
+        """Token counts from the model's real tokenizer when available."""
+        tokenizer = getattr(self._pipeline, "tokenizer", None)
+        if tokenizer is not None and hasattr(tokenizer, "encode"):
+            try:
+                return len(tokenizer.encode(text))
+            except Exception:  # noqa: BLE001 - never fabricate counts
+                return 0
+        return 0
 
     def models(self) -> list[str]:
         if self.config.model:

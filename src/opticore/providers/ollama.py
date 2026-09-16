@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from opticore.core.config import ProviderConfig
+from opticore.exceptions import ProviderTimeoutError
 from opticore.logging import get_logger
 from opticore.providers.base import BaseProvider, ProviderError, ProviderResponse
 
@@ -96,7 +97,15 @@ class OllamaProvider(BaseProvider):
             resp.raise_for_status()
             data = resp.json()
             elapsed_ms = (time.monotonic() - started) * 1000
-        except Exception as exc:  # noqa: BLE001
+        except requests.exceptions.Timeout as exc:
+            raise ProviderTimeoutError(
+                f"Ollama request timed out after {self.config.timeout_seconds}s"
+            ) from exc
+        except requests.exceptions.HTTPError as exc:
+            raise ProviderError(
+                f"Ollama HTTP error {getattr(exc.response, 'status_code', '?')}: {exc}"
+            ) from exc
+        except requests.exceptions.RequestException as exc:
             raise ProviderError(f"Ollama HTTP request failed: {exc}") from exc
         return ProviderResponse(
             content=data.get("message", {}).get("content", ""),

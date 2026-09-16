@@ -67,7 +67,13 @@ class OptimizationConfig:
         log_prompts: bool = False,
         **extra: Any,
     ) -> None:
-        self.safety_mode = SafetyMode(safety_mode)
+        try:
+            self.safety_mode = SafetyMode(safety_mode)
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"Invalid value for 'safety_mode': {safety_mode!r}. "
+                f"Allowed: {[m.value for m in SafetyMode]}"
+            ) from exc
         if max_token_budget < 0:
             raise ConfigurationError("max_token_budget must be >= 0")
         self.max_token_budget = max_token_budget
@@ -150,8 +156,8 @@ class OptimizationConfig:
         extra = {k: v for k, v in data.items() if k not in known}
         try:
             config = cls(**{k: v for k, v in data.items() if k in known})
-        except TypeError as exc:
-            raise ConfigurationError(f"Invalid configuration keys: {exc}") from exc
+        except (TypeError, ValueError) as exc:
+            raise ConfigurationError(f"Invalid configuration: {exc}") from exc
         config.extra = extra
         return config
 
@@ -240,11 +246,10 @@ def load_config(path: str | None = None, *, use_env: bool = True) -> Optimizatio
         suffix = path.rsplit(".", 1)[-1].lower()
         if suffix in ("yaml", "yml"):
             try:
-                import yaml  # type: ignore[import-untyped]  # requires the optional `yaml` extra
+                import yaml  # type: ignore[import-untyped]
             except ImportError as exc:
                 raise ConfigurationError(
-                    "Reading YAML config requires the 'yaml' extra "
-                    "(pip install 'ai-opticore[yaml]')"
+                    "Reading YAML config requires PyYAML (pip install pyyaml)"
                 ) from exc
             with open(path) as fh:
                 loaded = yaml.safe_load(fh)

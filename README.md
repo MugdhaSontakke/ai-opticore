@@ -25,9 +25,10 @@ Most apps have **no visibility** into how much of their spend is waste. AI-OptiC
 
 - **Measured, not claimed.** Every optimization is real, tested, and benchmarkable. We never fabricate results.
 - **Modular.** Add an optimizer, a provider, or a hardware backend without touching the core.
-- **Safe.** Different safety modes (SAFE / BALANCED / AGGRESSIVE) control how aggressive transformations are; quality gates warn when aggressive optimization may affect output.
+- **Safe.** Different safety modes (SAFE / BALANCED / AGGRESSIVE) control how aggressive transformations are; a quality gate evaluates each optimized request against the original (prompt + conversation history) and falls back to the original on failure.
 - **Provider-agnostic.** OpenAI-compatible APIs, Ollama, and local Hugging Face models all implement one provider interface.
 - **AMD-ready.** ROCm support is designed as an independent, testable backend from day one — no vendor lock-in.
+- **Honest.** Benchmarking reports real measured values including optimizer overhead and cache hit rate — or `N/A` when a metric cannot be measured. Never fabricated.
 
 ## Architecture
 
@@ -68,7 +69,7 @@ flowchart LR
 | --- | --- |
 | Token analysis | Real tokenizer implementations (`tiktoken`), per-component token counts, reduction % |
 | Prompt optimization | Removes obvious redundancy (repeated instructions, whitespace, duplicate context) with configurable safety modes |
-| Context optimization | Token budgets, recent/relevance prioritization, duplicate removal; never mutates your data |
+| Context optimization | Token budgets, recent-message priority (not true relevance), duplicate removal; never mutates your data |
 | Semantic cache | Exact + embedding similarity, configurable threshold, TTL, invalidation, metadata, hit/miss metrics |
 | Model routing | Complexity/budget/cost-based selection; disable fully when you don't want it |
 | Hardware abstraction | CPU / CUDA / ROCm backends with honest capability detection |

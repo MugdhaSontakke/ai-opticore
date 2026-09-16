@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 
@@ -80,8 +81,6 @@ def _entrypoint_parser() -> argparse.ArgumentParser:
 
 
 def cmd_init(args: argparse.Namespace) -> None:
-    import os
-
     from opticore.core.config import config_template
 
     if os.path.exists(CONFIG_PATH):
@@ -113,12 +112,20 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 
 def _load(config_path: str | None) -> OptimizationConfig:
-    path = config_path or CONFIG_PATH
+    """Load config, defaulting to built-in defaults when no file is used.
+
+    An explicit ``--config`` path must load successfully (errors surface).
+    The implicit ``opticore.yaml`` is only used when it exists and is valid;
+    if it exists but is broken we fail loudly instead of silently guessing.
+    """
+    path = config_path or (CONFIG_PATH if os.path.exists(CONFIG_PATH) else None)
     try:
-        return load_config(path if config_path else None)
+        return load_config(path)
     except OptiCoreError as exc:
         if config_path:
             _error(str(exc))
+        if path:
+            _error(f"default config {CONFIG_PATH} is invalid: {exc}")
         return OptimizationConfig()
 
 
@@ -179,6 +186,9 @@ def cmd_optimize(args: argparse.Namespace) -> None:
                     "optimizers_run": outcome.optimizers_run,
                     "changes": outcome.changes,
                     "quality_verified": outcome.quality_verified,
+                    "optimization_time_ms": outcome.optimization_time_ms,
+                    "accepted": outcome.accepted,
+                    "rejection_reason": outcome.rejection_reason,
                     "warnings": outcome.warnings,
                 },
                 indent=2,
@@ -190,6 +200,9 @@ def cmd_optimize(args: argparse.Namespace) -> None:
     print(f"Optimized tokens: {outcome.optimized_tokens}")
     print(f"Tokens saved: {outcome.tokens_saved} ({outcome.reduction_percent}%)")
     print(f"Optimizers: {', '.join(outcome.optimizers_run)}")
+    print(f"Optimization time: {outcome.optimization_time_ms} ms")
+    if not outcome.accepted:
+        print(f"REJECTED: {outcome.rejection_reason or 'quality gate failed'} (used original prompt)")
     if outcome.changes:
         print("Changes:")
         for change in outcome.changes:

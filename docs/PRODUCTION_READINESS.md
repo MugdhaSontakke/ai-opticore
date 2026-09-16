@@ -22,6 +22,37 @@
 > #1–#11 and Roadmap items (redis/disk cache, evaluator plugins, OSS metrics,
 > per-component timing).
 
+> **Update (hardening pass 2, 2026-09-16):** The remaining audit gaps were
+> closed. New/verified behavior (all covered by tests, **151 passing**, `ruff`
+> clean, `mypy` clean on Python 3.9):
+> - Quality gate correctness: conversation `messages` now count toward the
+>   similarity comparison; an unknown `quality_evaluator` raises
+>   `QualityEvaluationError` instead of failing open; rejection records
+>   `accepted=False` + `rejection_reason` on the result/outcome.
+> - Per-optimization timing and outcome surfaced everywhere:
+>   `optimization_time_ms`, `acceptance`, `rejection_reason` on results, and
+>   per-step `optimizer_time_by_step_ms` in pipeline metadata.
+> - Context optimizer `max_token_budget == 0` drops all messages explicitly.
+> - Cache: `MemoryCache` supports an explicit `CachePolicy` (serve-stale only
+>   when allowed); `SemanticCache` is bounded (`max_entries`, default 10_000)
+>   with oldest-entry eviction.
+> - Prompt-content logging is opt-in via `LOG_PROMPTS` / `config.log_prompts`
+>   and still redacts secrets; off by default.
+> - Providers: OpenAI client is reused (no per-call client construction); Ollama
+>   maps timeouts → `ProviderTimeoutError` and HTTP errors → typed `ProviderError`;
+>   Hugging Face reports real tokenizer token counts (honest
+>   `token_counts: unmeasured` otherwise) and honors `temperature` via
+>   `do_sample`.
+> - CLI: the default `opticore.yaml` is actually loaded (exit 1 + clear error
+>   when it exists but is invalid); `optimize` emits
+>   `optimization_time_ms`/`accepted`/`rejection_reason` in text and JSON; CLI
+>   misuse yields argparse exit code 2 (verified by test).
+> - Config: invalid `safety_mode` raises `ConfigurationError` (not a leaked
+>   `ValueError`); `from_dict` wraps all invalid-value errors consistently.
+> - Benchmarking: real cache hit/miss counts and a factual `cache_hit_rate` are
+>   measured when the cache is enabled, and `N/A` when it is not; commit hashes
+>   for this pass along with earlier hardening: `1ac316a` (baseline) → current.
+
 This report is a factual assessment of what actually exists in the repository.
 It does not assume that a feature works because a file or interface exists.
 
