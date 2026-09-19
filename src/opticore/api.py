@@ -11,7 +11,6 @@ saves tokens but costs more wall-clock time than it saves is visible.
 
 from __future__ import annotations
 
-import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -23,10 +22,11 @@ from opticore.cache.semantic import SemanticCache
 from opticore.core.config import OptimizationConfig
 from opticore.core.model import AIRequest, AIResponse
 from opticore.core.pipeline import OptimizationPipeline, build_default_pipeline
+from opticore.logging import get_logger
 from opticore.providers import get_provider
 from opticore.providers.base import BaseProvider
 
-logger = logging.getLogger("opticore.api")
+logger = get_logger("opticore.api")
 
 EmbeddingFn = Callable[[str], list[float]]
 
@@ -47,6 +47,8 @@ class OptimizeOutcome:
     optimization_time_ms: float = 0.0
     accepted: bool = True
     rejection_reason: str | None = None
+    optimized_system: str | None = None
+    optimized_messages: list[dict[str, Any]] | None = None
 
     @property
     def warnings_text(self) -> str:
@@ -110,6 +112,8 @@ class Optimizer:
             optimization_time_ms=round(result.optimization_time_ms, 3),
             accepted=result.accepted,
             rejection_reason=result.rejection_reason,
+            optimized_system=result.optimized_request.system,
+            optimized_messages=result.optimized_request.messages,
         )
 
 
@@ -130,6 +134,11 @@ class GenerationResult:
     model_time_ms: float = 0.0
     total_time_ms: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    accepted: bool = True
+    rejection_reason: str | None = None
+    changes: list[str] = field(default_factory=list)
+    optimized_system: str | None = None
+    optimized_messages: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -137,6 +146,9 @@ class GenerationResult:
             "model": self.model,
             "provider": self.provider,
             "cache_hit": self.cache_hit,
+            "accepted": self.accepted,
+            "rejection_reason": self.rejection_reason,
+            "changes": self.changes,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "total_tokens": self.input_tokens + self.output_tokens,
@@ -208,6 +220,7 @@ class AIClient:
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         namespace: str | None = None,
+        no_cache: bool = False,
     ) -> GenerationResult:
         """Optimize and generate a response (with optional cache lookup)."""
         self.metrics.incr("request_count", 1)
@@ -216,16 +229,17 @@ class AIClient:
         active_model = model or provider_model or "unknown"
 
         optimizer_time_ms = 0.0
-        request_meta: dict[str, Any] = {}
-        no_cache = bool(request_meta.get("no_cache"))
+        accepted = True
+        rejection_reason: str | None = None
+        changes: list[str] = []
+        optimized_system: str | None = None
+        optimized_messages: list[dict[str, Any]] | None = None
         if self._optimization_enabled:
             opt_started = time.monotonic()
             result = self.pipeline.run(
                 prompt=prompt or "", system=system, messages=messages
             )
             optimizer_time_ms = (time.monotonic() - opt_started) * 1000.0
-            request_meta = result.metadata
-            no_cache = bool(request_meta.get("no_cache"))
             accumulate_tokens(
                 self.metrics, result.original_tokens, result.optimized_tokens
             )
@@ -234,6 +248,11 @@ class AIClient:
             optimized_tokens = result.optimized_tokens
             tokens_saved = result.tokens_saved
             optimizers_run = result.optimizers_run
+            accepted = result.accepted
+            rejection_reason = result.rejection_reason
+            changes = result.changes
+            optimized_system = result.optimized_request.system
+            optimized_messages = result.optimized_request.messages
         else:
             send = AIRequest(prompt=prompt or "", system=system, messages=messages)
             original_tokens = optimized_tokens = tokens_saved = 0
@@ -311,6 +330,11 @@ class AIClient:
                     output_tokens=response.output_tokens if response else 0,
                 ),
             },
+            accepted=accepted,
+            rejection_reason=rejection_reason,
+            changes=changes,
+            optimized_system=optimized_system,
+            optimized_messages=optimized_messages,
         )
 
     def _cache_lookup(
@@ -375,6 +399,7 @@ class AIClient:
                     ),
                     content,
                     model or "unknown",
+                    ttl_seconds=self.config.cache_ttl_seconds,
                 )
         except Exception as exc:  # noqa: BLE001 - cache failure must not kill generation
             logger.warning("cache write failed (generation unaffected): %s", exc)

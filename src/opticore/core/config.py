@@ -11,6 +11,21 @@ from opticore.exceptions import ConfigurationError
 _SENSITIVE_CONFIG_KEYS = {"api_key", "apikey", "token", "secret", "password"}
 
 
+def _find_sensitive_keys(mapping: dict[str, Any], prefix: str = "") -> list[str]:
+    """Find secret-like keys at any nesting depth (e.g. ``provider.api_key``).
+
+    Guards against nested secrets bypassing the top-level-only check.
+    """
+    found: list[str] = []
+    for key, value in mapping.items():
+        location = f"{prefix}{key}"
+        if key.lower() in _SENSITIVE_CONFIG_KEYS:
+            found.append(location)
+        if isinstance(value, dict):
+            found.extend(_find_sensitive_keys(value, f"{location}."))
+    return found
+
+
 class SafetyMode(str, Enum):  # noqa: UP042 - kept (str, Enum) for py3.9 dev compatibility
     """Operational safety mode for optimizations.
 
@@ -56,7 +71,7 @@ class OptimizationConfig:
         enable_prompt_optimization: bool = True,
         enable_context_optimization: bool = True,
         enable_semantic_cache: bool = True,
-        enable_model_routing: bool = True,
+        enable_model_routing: bool = False,
         semantic_cache_threshold: float = 0.90,
         cache_ttl_seconds: float = 3600.0,
         prioritize_recent: bool = True,
@@ -270,7 +285,7 @@ def load_config(path: str | None = None, *, use_env: bool = True) -> Optimizatio
                 f"Unsupported config extension {suffix!r} (use .yaml, .yml or .json)"
             )
 
-        secrets = [k for k in data if k.lower() in _SENSITIVE_CONFIG_KEYS]
+        secrets = _find_sensitive_keys(data)
         if secrets:
             raise ConfigurationError(
                 "Do not store API keys/secrets in config files. "
@@ -294,7 +309,7 @@ def config_template() -> dict[str, Any]:
         "enable_prompt_optimization": True,
         "enable_context_optimization": True,
         "enable_semantic_cache": True,
-        "enable_model_routing": True,
+        "enable_model_routing": False,
         "semantic_cache_threshold": 0.90,
         "cache_ttl_seconds": 3600,
         "prioritize_recent": True,

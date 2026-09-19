@@ -1,17 +1,22 @@
 """Optional model routing based on request characteristics.
 
-The router does NOT promise accuracy improvements. It selects a model based
-on configurable signals (complexity, budget, latency, cost). Users can disable
-routing entirely; when disabled, the configured default model is always used.
+Status: experimental — routing is not wired into the CLI or ``AIClient`` by
+default and is disabled unless ``enable_model_routing`` is set explicitly. It
+is deterministic and inspectable, but does NOT promise accuracy improvements.
+
+The router selects a model based on configurable signals (complexity, budget,
+latency, cost). Users can disable routing entirely; when disabled, the
+configured default model is always used.
 """
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-logger = logging.getLogger("opticore.routing")
+from opticore.logging import get_logger
+
+logger = get_logger("opticore.routing")
 
 ComplexityFn = Callable[[str], float]
 

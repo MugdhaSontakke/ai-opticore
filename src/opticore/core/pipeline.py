@@ -62,6 +62,7 @@ class OptimizationPipeline:
         prompt: str | None = None,
         system: str | None = None,
         messages: list[dict[str, str]] | None = None,
+        tools: list[dict[str, Any]] | None = None,
         request: AIRequest | None = None,
     ) -> OptimizerResult:
         """Execute all enabled optimizers against a request.
@@ -69,7 +70,12 @@ class OptimizationPipeline:
         Either pass the individual parts or a pre-built ``request``.
         """
         if request is None:
-            request = AIRequest(prompt=prompt or "", system=system, messages=messages)
+            request = AIRequest(
+                prompt=prompt or "",
+                system=system,
+                messages=messages,
+                tools=tools,
+            )
 
         current = request
         names_run: list[str] = []

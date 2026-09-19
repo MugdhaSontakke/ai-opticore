@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
 from opticore.core.config import OptimizationConfig
 from opticore.core.interfaces import OptimizerRequest, OptimizerResult
+from opticore.logging import get_logger
 
-logger = logging.getLogger("opticore.optimizers")
+logger = get_logger("opticore.optimizers")
 
 
 class BaseOptimizer(ABC):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -25,11 +26,16 @@ class OllamaProvider(BaseProvider):
     def __init__(
         self,
         config: ProviderConfig | None = None,
-        base_url: str = "http://localhost:11434",
+        base_url: str | None = None,
         model: str | None = None,
     ) -> None:
         super().__init__(config or ProviderConfig(provider="ollama"))
-        self.base_url = base_url
+        if base_url:
+            self.base_url = base_url
+        else:
+            self.base_url = os.environ.get(
+                "OLLAMA_BASE_URL", "http://localhost:11434"
+            )
         if model:
             self.config.model = model
         if self.config.base_url and self.config.base_url != "openai":

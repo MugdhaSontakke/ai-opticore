@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from typing import Any
 
 from opticore.core.config import OptimizationConfig, SafetyMode
 from opticore.core.interfaces import OptimizerRequest, OptimizerResult
+from opticore.logging import get_logger
 from opticore.optimizers.base import BaseOptimizer
 from opticore.optimizers.token import Tokenizer, count_tokens
 
-logger = logging.getLogger("opticore.optimizers.prompt")
+logger = get_logger("opticore.optimizers.prompt")
 
 
 def _collapse_whitespace(text: str) -> str:

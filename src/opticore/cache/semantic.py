@@ -7,7 +7,6 @@ provider is installed the cache falls back to exact-match only behavior.
 from __future__ import annotations
 
 import hashlib
-import logging
 import threading
 import time
 from collections.abc import Callable
@@ -15,8 +14,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from opticore.cache.base import BaseCache, CacheEntry, MemoryCache
+from opticore.logging import get_logger
 
-logger = logging.getLogger("opticore.cache.semantic")
+logger = get_logger("opticore.cache.semantic")
 
 EmbeddingFn = Callable[[str], list[float]]
 

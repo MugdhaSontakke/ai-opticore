@@ -7,15 +7,15 @@ for comparison.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from opticore.core.config import OptimizationConfig
 from opticore.core.interfaces import OptimizerRequest, OptimizerResult
+from opticore.logging import get_logger
 from opticore.optimizers.base import BaseOptimizer
 from opticore.optimizers.token import Tokenizer, count_tokens
 
-logger = logging.getLogger("opticore.optimizers.context")
+logger = get_logger("opticore.optimizers.context")
 
 
 class ContextOptimizer(BaseOptimizer):

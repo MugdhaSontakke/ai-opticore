@@ -9,7 +9,6 @@ which saves tokens but is slower overall is clearly visible.
 
 from __future__ import annotations
 
-import logging
 import os
 import platform
 import statistics
@@ -25,10 +24,11 @@ from opticore.core.config import OptimizationConfig
 from opticore.core.interfaces import OptimizerRequest
 from opticore.core.pipeline import build_default_pipeline
 from opticore.hardware import detect_backend
+from opticore.logging import get_logger
 from opticore.optimizers.token import Tokenizer
 from opticore.providers.base import ProviderResponse
 
-logger = logging.getLogger("opticore.benchmarks")
+logger = get_logger("opticore.benchmarks")
 
 
 @dataclass
@@ -43,6 +43,7 @@ class BenchmarkResult:
     optimized: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
     samples: int = 0
+    dataset: str = "builtin"
     environment: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
@@ -56,6 +57,7 @@ class BenchmarkResult:
             f"Model: {self.model}",
             f"Provider: {self.provider}",
             f"Hardware: {self.hardware}",
+            f"Dataset: {self.dataset}",
             f"Optimizer overhead (avg): {self._fmt_ms(self.metrics.get('optimizer_overhead_ms_avg'))}",
             f"Samples: {self.samples}",
             f"Timestamp: {env.get('timestamp', 'N/A')}",
@@ -74,6 +76,7 @@ class BenchmarkResult:
             f"Token reduction: {self.metrics.get('token_reduction_percent', 'N/A')}",
             f"Latency change: {self.metrics.get('latency_change_percent', 'N/A')}",
             f"Cache hit rate: {self.metrics.get('cache_hit_rate', 'N/A')}",
+            f"Quality score (avg): {self.metrics.get('quality_score_avg', 'N/A')}",
         ]
         if self.notes:
             lines += ["", "Notes:"]
@@ -88,6 +91,7 @@ class BenchmarkResult:
             "provider": self.provider,
             "hardware": self.hardware,
             "samples": self.samples,
+            "dataset": self.dataset,
             "config": self.config,
             "baseline": self.baseline,
             "optimized": self.optimized,
@@ -118,6 +122,7 @@ class BenchmarkRunner:
         config: OptimizationConfig | None = None,
         repeats: int = 3,
         provider_notes: list[str] | None = None,
+        dataset: str = "builtin",
     ) -> None:
         self.provider = provider
         self.model = model
@@ -125,6 +130,7 @@ class BenchmarkRunner:
         self.config = config or OptimizationConfig()
         self.repeats = repeats
         self.provider_notes = provider_notes or []
+        self.dataset = dataset
 
     def run(self) -> BenchmarkResult:
         baseline_metrics: dict[str, Any] = {"input_tokens": [], "output_tokens": [], "latency_ms": []}
@@ -132,6 +138,9 @@ class BenchmarkRunner:
 
         collector = MetricsCollector()
         optimizer_times: list[float] = []
+        quality_scores: list[float] = []
+        quality_checked = 0
+        quality_verified = 0
         tokenizer = Tokenizer()
         self._cache: MemoryCache | None = (
             MemoryCache() if self.config.enable_semantic_cache else None
@@ -155,6 +164,7 @@ class BenchmarkRunner:
                     prompt=request.prompt,
                     system=request.system,
                     messages=request.messages,
+                    tools=getattr(request, "tools", None),
                 )
                 optimizer_overhead_ms = (time.monotonic() - opt_started) * 1000.0
                 optimizer_times.append(optimizer_overhead_ms)
@@ -164,6 +174,14 @@ class BenchmarkRunner:
                     pipeline_result.original_tokens,
                     pipeline_result.optimized_tokens,
                 )
+                quality = pipeline_result.metadata.get("quality")
+                if isinstance(quality, dict):
+                    score = quality.get("similarity")
+                    if isinstance(score, (int, float)):
+                        quality_scores.append(float(score))
+                    quality_checked += 1
+                    if quality.get("verified") is True:
+                        quality_verified += 1
 
                 opt_latency = 0.0
                 opt_out = 0.0
@@ -222,6 +240,7 @@ class BenchmarkRunner:
             },
             metrics={},
             samples=len(self.samples) * self.repeats,
+            dataset=self.dataset,
             environment=_environment_report(tokenizer),
             notes=list(self.provider_notes),
         )
@@ -242,6 +261,14 @@ class BenchmarkRunner:
             "cache_misses": cache_misses,
             "optimizer_overhead_ms_avg": _avg(optimizer_times),
             "avg_tokens_saved_per_request": max(0, (base_in or 0) - (opt_in or 0)),
+            "quality_score_avg": (
+                round(statistics.mean(quality_scores), 4) if quality_scores else "N/A"
+            ),
+            "quality_verified": (
+                f"{quality_verified}/{quality_checked}"
+                if quality_checked
+                else "N/A"
+            ),
             "summary": collector.summary(),
         }
         if base_in is None or base_in == 0:
@@ -259,6 +286,7 @@ class BenchmarkRunner:
             "prompt": request.prompt,
             "system": request.system,
             "messages": request.messages,
+            "tools": getattr(request, "tools", None),
             "model": self.model,
         }
         started = time.monotonic()

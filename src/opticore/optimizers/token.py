@@ -14,18 +14,18 @@ instead of silently falling back."""
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from opticore.core.config import OptimizationConfig
 from opticore.core.interfaces import OptimizerRequest, OptimizerResult
 from opticore.exceptions import TokenizerNotFoundError, UnsupportedModelError
+from opticore.logging import get_logger
 from opticore.optimizers.base import BaseOptimizer
 
 if TYPE_CHECKING:
     import tiktoken
 
-logger = logging.getLogger("opticore.optimizers.token")
+logger = get_logger("opticore.optimizers.token")
 
 _DEFAULT_ENCODING = "cl100k_base"
 

@@ -7,13 +7,14 @@ similarity is provided by default so the system works without ML deps.
 
 from __future__ import annotations
 
-import logging
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
-logger = logging.getLogger("opticore.evaluation")
+from opticore.logging import get_logger
+
+logger = get_logger("opticore.evaluation")
 
 SimilarityFn = Callable[[str, str], float]
 
