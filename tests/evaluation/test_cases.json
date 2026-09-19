@@ -1,0 +1,89 @@
+{
+  "description": "Deterministic evaluation dataset for AI-OptiCore quality regression testing. Each case is run through the pipeline (baseline vs optimized) and must never silently degrade. Content is never compared against a 'gold' answer because that would require a judge model; instead the suite verifies availability, token impact, restoration on quality-gate rejection, and cache behavior.",
+  "cases": [
+    {
+      "id": "factual_question",
+      "category": "factual question",
+      "prompt": "What is the capital of France?",
+      "system": "You are a helpful assistant.",
+      "expect": "content-preserving"
+    },
+    {
+      "id": "summarization",
+      "category": "summarization",
+      "prompt": "Summarize the following article in three bullet points: The company reported revenue growth of 20% in the latest quarter, driven by strong demand for its cloud services. Operating margins improved as costs were kept flat.",
+      "system": "Summarize concisely and accurately.",
+      "expect": "content-preserving"
+    },
+    {
+      "id": "coding_question",
+      "category": "coding question",
+      "prompt": "Write a python function that implements binary search over a sorted list. Include docstring and type hints.",
+      "system": "You are an expert software engineer.",
+      "expect": "content-preserving"
+    },
+    {
+      "id": "reasoning_question",
+      "category": "reasoning question",
+      "prompt": "If a train travels 300 kilometers in 2.5 hours, what is its average speed in kilometers per hour? Show your reasoning step by step.",
+      "system": "You are a math tutor.",
+      "expect": "content-preserving"
+    },
+    {
+      "id": "conversational_context",
+      "category": "conversational context",
+      "prompt": "What was the main point I asked about earlier?",
+      "system": "You are a helpful assistant.",
+      "messages": [
+        {"role": "user", "content": "Can you explain how caching works?"},
+        {"role": "assistant", "content": "Caching stores results to avoid repeating work."},
+        {"role": "user", "content": "What was the main point I asked about earlier?"}
+      ],
+      "expect": "content-preserving"
+    },
+    {
+      "id": "repeated_request",
+      "category": "repeated request",
+      "prompt": "What is the tallest mountain in the world?",
+      "system": "You are a helpful assistant.",
+      "repeat_of": "repeated_request_b",
+      "expect": "cache-safe"
+    },
+    {
+      "id": "repeated_request_b",
+      "category": "repeated request",
+      "prompt": "What is the tallest mountain in the world?",
+      "system": "You are a helpful assistant.",
+      "repeat_of": "repeated_request",
+      "expect": "cache-safe"
+    },
+    {
+      "id": "long_context",
+      "category": "long-context request",
+      "prompt": "Analyze the quarterly performance of the engineering team across these dimensions: velocity, quality, hiring, onboarding, and tooling. Attach specific numerical examples for each dimension and recommend two concrete actions per dimension.",
+      "system": "You are an engineering manager writing a status report.",
+      "expect": "content-preserving"
+    },
+    {
+      "id": "structured_output",
+      "category": "structured-output request",
+      "prompt": "Return a JSON object with keys: \"title\", \"summary\", \"keywords\" describing the benefits of structured output formats.",
+      "system": "Always reply with valid JSON only.",
+      "expect": "content-preserving"
+    },
+    {
+      "id": "ambiguous_request",
+      "category": "ambiguous request",
+      "prompt": "Fix it.",
+      "system": "You are a helpful assistant.",
+      "expect": "content-preserving"
+    },
+    {
+      "id": "system_instruction_heavy",
+      "category": "system-instruction-heavy request",
+      "prompt": "Respond with a one-sentence answer.",
+      "system": "You are a support agent. Always be polite. Never mention pricing. Never invent facts. Keep responses under twenty words. End with a question.",
+      "expect": "content-preserving"
+    }
+  ]
+}

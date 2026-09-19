@@ -63,6 +63,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ValueError`) and `from_dict` wraps invalid config values consistently.
 - Benchmarking now measures real cache hit/miss counts and a `cache_hit_rate`
   percentage when the semantic cache is enabled (`N/A` when disabled).
+- Production-validation pass: observability, cost, disk cache, routing safety,
+  provider regression tests, per-scenario benchmarks, honest docs.
+  - Per-request observability: `request_id`, end-to-end `total_time_ms`,
+    `cache_lookup_ms`, routing decision, quality verdict, `fallback_reason`,
+    and metrics series (`optimizer_time_ms`, `cache_lookup_ms`,
+    `model_time_ms`, `estimated_cost_per_request`) plus counters
+    (`cache_read_errors`, `cache_write_errors`, `quality_gate_rejections`,
+    `fallbacks`, `routing_failures`).
+  - Costing: `opticore.CostEstimator` with user-configured pricing
+    (`pricing.input_per_1k` / `output_per_1k`, aliases supported). Costs are
+    always labeled `estimated`; `N/A` when pricing is unconfigured. Wired into
+    `AIClient` (per-request `estimated_cost`), benchmark output, and metrics.
+  - Disk cache backend: `opticore.cache.DiskCache` (SQLite, stdlib-only, TTL,
+    bounded by `max_entries`, typed `CacheError` on corruption), selected via
+    `cache_backend="disk"` + `cache_disk_path`. Cache read/write failures fall
+    back to the model.
+  - Model routing safety: `RoutingError`, availability validation against
+    `available_models`, fallback resolution (preferred → fallbacks → default),
+    decision logging and per-request `metadata.routing`.
+  - `tools` passthrough in `pipeline.run(...)` and the benchmark runner.
+  - Benchmarking: median + p95 latency, `net_latency_change_ms`,
+    `provider_latency_ms_avg`, `optimization_overhead_tokens` (0 — local
+    deterministic optimizers, stated honestly), estimated cost, per-scenario
+    (A–H) summaries, JSON dataset loader (`load_benchmark_dataset`), and
+    honest notes when latency increases.
+  - Provider regression tests: `tests/test_providers_live.py` (env-gated,
+    skips cleanly in CI) + optional manual `provider-live` GitHub workflow.
+  - Deterministic quality-regression dataset `tests/evaluation/test_cases.json`
+    and `tests/test_evaluation_suite.py`.
+  - Dashboard distinguishes REAL measured data from DEMO (no fabricated claims).
+  - Docs: `docs/production_readiness.md` (matrix),
+    `docs/production_checklist.md` (scorecard), `docs/next_roadmap.md`,
+    README + configuration updates (pricing, disk cache, live tests).
+  - 178 runtime tests (incl. Hypothesis property tests), coverage ~79%.
 
 ### Fixed
 

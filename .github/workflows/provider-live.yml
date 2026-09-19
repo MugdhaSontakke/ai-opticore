@@ -1,0 +1,30 @@
+name: Provider Live Regression (manual)
+
+# PHASE 3/13: external-provider regression against real endpoints.
+# Runs only on manual dispatch (never in normal CI) because it hits paid or
+# local endpoints. Skips cleanly when credentials are absent, so a missing
+# secret never fails this workflow.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  live-providers:
+    runs-on: ubuntu-latest
+    env:
+      OPTICORE_TEST_LIVE: "1"
+      OPTICORE_TEST_OPENAI_MODEL: ${{ vars.OPTICORE_TEST_OPENAI_MODEL || 'gpt-4o-mini' }}
+      OPTICORE_TEST_OPENAI_API_KEY: ${{ secrets.OPTICORE_TEST_OPENAI_API_KEY }}
+      OPTICORE_TEST_OLLAMA_URL: ${{ secrets.OPTICORE_TEST_OLLAMA_URL }}
+      OPTICORE_TEST_OLLAMA_MODEL: ${{ vars.OPTICORE_TEST_OLLAMA_MODEL || 'llama3.2' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install with live-test extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,openai,ollama]"
+      - name: Run provider regression tests (skips when no creds/endpoints)
+        run: pytest -q tests/test_providers_live.py

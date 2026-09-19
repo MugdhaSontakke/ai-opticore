@@ -74,12 +74,16 @@ class OptimizationConfig:
         enable_model_routing: bool = False,
         semantic_cache_threshold: float = 0.90,
         cache_ttl_seconds: float = 3600.0,
+        cache_backend: str = "memory",
+        cache_disk_path: str | None = None,
         prioritize_recent: bool = True,
         quality_enabled: bool = True,
         quality_minimum_score: float = 0.85,
         quality_reject_on_failure: bool = False,
         quality_evaluator: str = "character",
         log_prompts: bool = False,
+        pricing_input_per_1k: float = 0.0,
+        pricing_output_per_1k: float = 0.0,
         **extra: Any,
     ) -> None:
         try:
@@ -105,6 +109,12 @@ class OptimizationConfig:
         if cache_ttl_seconds < 0:
             raise ConfigurationError("cache_ttl_seconds must be >= 0")
         self.cache_ttl_seconds = float(cache_ttl_seconds)
+        if cache_backend not in ("memory", "disk"):
+            raise ConfigurationError(
+                f"cache_backend must be 'memory' or 'disk', got {cache_backend!r}"
+            )
+        self.cache_backend = cache_backend
+        self.cache_disk_path = cache_disk_path
         self.prioritize_recent = bool(prioritize_recent)
         self.quality_enabled = bool(quality_enabled)
         if not 0.0 < quality_minimum_score <= 1.0:
@@ -113,6 +123,10 @@ class OptimizationConfig:
         self.quality_reject_on_failure = bool(quality_reject_on_failure)
         self.quality_evaluator = quality_evaluator or "character"
         self.log_prompts = bool(log_prompts)
+        if pricing_input_per_1k < 0 or pricing_output_per_1k < 0:
+            raise ConfigurationError("pricing must be non-negative")
+        self.pricing_input_per_1k = float(pricing_input_per_1k)
+        self.pricing_output_per_1k = float(pricing_output_per_1k)
         self.extra = extra
 
     def to_dict(self) -> dict[str, Any]:
@@ -130,12 +144,16 @@ class OptimizationConfig:
             "enable_model_routing": self.enable_model_routing,
             "semantic_cache_threshold": self.semantic_cache_threshold,
             "cache_ttl_seconds": self.cache_ttl_seconds,
+            "cache_backend": self.cache_backend,
+            "cache_disk_path": self.cache_disk_path,
             "prioritize_recent": self.prioritize_recent,
             "quality_enabled": self.quality_enabled,
             "quality_minimum_score": self.quality_minimum_score,
             "quality_reject_on_failure": self.quality_reject_on_failure,
             "quality_evaluator": self.quality_evaluator,
             "log_prompts": self.log_prompts,
+            "pricing_input_per_1k": self.pricing_input_per_1k,
+            "pricing_output_per_1k": self.pricing_output_per_1k,
             **self.extra,
         }
 
@@ -151,6 +169,19 @@ class OptimizationConfig:
         if isinstance(quality, dict):
             for key, value in quality.items():
                 data[f"quality_{key}"] = value
+        pricing = data.pop("pricing", None)
+        if isinstance(pricing, dict):
+            pricing_aliases = {
+                "input_per_1k": "pricing_input_per_1k",
+                "input_cost_per_1k_tokens": "pricing_input_per_1k",
+                "output_per_1k": "pricing_output_per_1k",
+                "output_cost_per_1k_tokens": "pricing_output_per_1k",
+            }
+            for key, value in pricing.items():
+                if key in pricing_aliases:
+                    data[pricing_aliases[key]] = value
+                else:
+                    data[f"pricing_{key}"] = value
         known = {
             "safety_mode",
             "max_token_budget",
@@ -161,12 +192,16 @@ class OptimizationConfig:
             "enable_model_routing",
             "semantic_cache_threshold",
             "cache_ttl_seconds",
+            "cache_backend",
+            "cache_disk_path",
             "prioritize_recent",
             "quality_enabled",
             "quality_minimum_score",
             "quality_reject_on_failure",
             "quality_evaluator",
             "log_prompts",
+            "pricing_input_per_1k",
+            "pricing_output_per_1k",
         }
         extra = {k: v for k, v in data.items() if k not in known}
         try:
@@ -312,6 +347,8 @@ def config_template() -> dict[str, Any]:
         "enable_model_routing": False,
         "semantic_cache_threshold": 0.90,
         "cache_ttl_seconds": 3600,
+        "cache_backend": "memory",
+        "cache_disk_path": None,
         "prioritize_recent": True,
         "quality": {
             "enabled": True,
@@ -319,5 +356,11 @@ def config_template() -> dict[str, Any]:
             "reject_on_failure": False,
             "evaluator": "character",
         },
-        "log_prompts": False,
+"log_prompts": False,
+        "pricing": {
+            "input_per_1k": 0.0,
+            "output_per_1k": 0.0,
+            # Optional, user-supplied USD-per-1k-token estimates. Costs are
+            # always labeled "estimated" and never hardcoded by the package.
+        },
     }

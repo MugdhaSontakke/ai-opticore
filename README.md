@@ -70,12 +70,13 @@ flowchart LR
 | Token analysis | Real tokenizer implementations (`tiktoken`), per-component token counts, reduction % |
 | Prompt optimization | Removes obvious redundancy (repeated instructions, whitespace, duplicate context) with configurable safety modes |
 | Context optimization | Token budgets, recent-message priority (not true relevance), duplicate removal; never mutates your data |
-| Semantic cache | Exact + embedding similarity, configurable threshold, TTL, invalidation, metadata, hit/miss metrics |
-| Model routing | Complexity/budget/cost-based selection; disable fully when you don't want it |
+| Semantic cache | Exact + embedding similarity, configurable threshold, TTL, invalidation, metadata, model/provider/namespace isolation, hit/miss metrics; bounded memory or SQLite disk backend |
+| Model routing | Complexity/budget-based selection with availability validation + fallback; disable fully when you don't want it |
 | Hardware abstraction | CPU / CUDA / ROCm backends with honest capability detection |
 | Inference optimization | Interfaces for batching, quantization, loading, memory tracking (experimental/planned statuses are explicit) |
-| Benchmarking | Real measurements, baseline vs optimized, `ai-opticore benchmark` |
-| Evaluation | Request/response similarity, quality gates, pluggable evaluators |
+| Benchmarking | Real measurements, baseline vs optimized, median/p95, net latency change, per-scenario breakdown, `ai-opticore benchmark` |
+| Cost | Optional user-configured pricing; costs are always labeled `estimated` and `N/A` when unconfigured |
+| Evaluation | Request/response similarity, quality gates, pluggable evaluators; rejection restores the original request |
 | Metrics | Unified `MetricsCollector` that is extensible |
 | CLI | `init`, `optimize`, `benchmark`, `cache`, `models`, `hardware`, `config` |
 | Dashboard | Lightweight React dashboard (see `dashboard/`) |
@@ -150,12 +151,24 @@ response = client.generate(prompt="Explain caching in LLM applications.")
 print(response.content)
 print(response.tokens_saved)
 print(response.cache_hit)
+print(response.request_id)       # per-request observability
+print(response.metadata["routing"])   # when a ModelRouter is attached
+print(response.estimated_cost)   # only populated when pricing is configured
 ```
 
 Turn optimization off for a baseline comparison:
 
 ```python
 baseline_client = AIClient(provider="openai", optimization=False)
+```
+
+Optional disk cache (survives process restarts; SQLite, stdlib-only):
+
+```python
+client = AIClient(
+    provider="ollama",
+    config=OptimizationConfig(cache_backend="disk", cache_disk_path="/var/cache/opticore.sqlite"),
+)
 ```
 
 ## Benchmarking
@@ -167,32 +180,36 @@ ai-opticore benchmark --provider ollama
 ai-opticore benchmark --samples 10 --repeats 3
 ```
 
-Output contains **real measured values** (or `N/A` when a metric cannot be measured):
+Output contains **real measured values** (or `N/A` when a metric cannot be measured). It reports
+baseline vs optimized tokens and latency, median and p95 latency, the net latency
+change (including when optimization makes a workload *slower*), optimizer overhead vs
+provider latency split, cache hit rate, per-scenario breakdowns, and estimated cost
+only when you configure pricing:
 
-```text
-AI-OptiCore Benchmark
---------------------
-
-Model: ...
-Provider: ...
-Hardware: ...
-
-Baseline
-Input tokens: ...
-Output tokens: ...
-Latency: ...
-
-Optimized
-Input tokens: ...
-Output tokens: ...
-Latency: ...
-
-Token reduction: ...
-Latency change: ...
-Cache hit rate: ...
+```yaml
+# opticore.yaml
+pricing:
+  input_per_1k: 0.005   # USD per 1k input tokens (example, user-supplied)
+  output_per_1k: 0.015
 ```
 
+> Cost figures are always labeled `estimated` — AI-OptiCore never bakes in vendor
+> prices that can go stale, and never reports a cost figure when pricing is not
+> configured.
+
 > AI-OptiCore provides tools for measuring and reducing unnecessary token usage. We do not publish fixed reduction claims — run your own benchmarks on your own workloads.
+
+## Provider regression testing
+
+```bash
+# Run real-endpoint regression tests (optional/opt-in; skips cleanly in CI):
+OPTICORE_TEST_LIVE=1 \
+OPTICORE_TEST_OPENAI_API_KEY=sk-... \
+pytest -q tests/test_providers_live.py
+```
+
+See `tests/test_providers_live.py` for all supported variables (OpenAI-compatible,
+Ollama), plus the manual `provider-live` GitHub workflow.
 
 ## Supported providers
 
@@ -214,12 +231,19 @@ Detection never fakes results. If a backend is unavailable, a clear capability m
 
 ## Roadmap
 
-- [ ] v0.2 — Redis/disk cache backends
-- [ ] v0.2 — Prompt templates and instruction-preserving rewrites
-- [ ] v0.3 — Real batched inference executor
-- [ ] v0.3 — Automated regression suite over provider SDKs
+- [x] Initial hardening toward v0.1 (quality gate with safe fallback, overhead measurement, cache isolation, secret-safe logging)
+- [x] v0.1 hardening pass 2 (real provider analytics, per-step timing, honest timing/caching, `ai-opticore` exit codes)
+- [x] v0.1.0 — Disk cache backend (SQLite), estimated-cost accounting, per-scenario benchmarks, provider regression test framework, observability (request IDs, routing/quality/fallback metadata), dashboard REAL-vs-DEMO labeling
+- [ ] v0.2 — Live-provider matrix validated per release; SSRF guardrails; Docker compose + healthcheck
+- [ ] v0.2 — Mock-based unit tests for provider SDK request/error paths
+- [ ] v0.3 — Redis cache backend; real batched inference executor
+- [ ] v0.3 — Response-level quality gate with a judge/similarity model (optional path)
 - [ ] v0.4 — Dashboard with live metrics (see `dashboard/`)
 - [ ] v0.4 — ONNX Runtime hardware backends
+
+Full plan: [`docs/next_roadmap.md`](docs/next_roadmap.md) · Scorecard:
+[`docs/production_checklist.md`](docs/production_checklist.md) · Matrix:
+[`docs/production_readiness.md`](docs/production_readiness.md)
 
 ## Contributing
 

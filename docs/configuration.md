@@ -52,12 +52,17 @@ enable_semantic_cache: true
 enable_model_routing: true
 semantic_cache_threshold: 0.90
 cache_ttl_seconds: 3600
+cache_backend: memory        # or "disk" (SQLite; stdlib-only, no extra deps)
+cache_disk_path: null        # e.g. /var/cache/opticore.sqlite (required for disk)
 prioritize_recent: true
 quality:
   enabled: true
   minimum_score: 0.85
   reject_on_failure: false
   evaluator: character
+pricing:
+  input_per_1k: 0.0          # USD per 1k input tokens (estimate, user-supplied)
+  output_per_1k: 0.0         # USD per 1k output tokens
 log_prompts: false
 ```
 
@@ -66,6 +71,12 @@ Notes:
 - The `quality` block is flattened into `quality_enabled`,
   `quality_minimum_score`, `quality_reject_on_failure`, and
   `quality_evaluator`.
+- The `pricing` block is flattened into `pricing_input_per_1k` and
+  `pricing_output_per_1k` (`input_cost_per_1k_tokens` and
+  `output_cost_per_1k_tokens` aliases are accepted). Costs are always labeled
+  `estimated`; values of `0.0` mean "not configured" and yield `N/A`.
+- `cache_backend: disk` requires a writable `cache_disk_path`. When a semantic
+  embedding function is provided, the semantic cache is used regardless.
 - JSON config files are accepted too (`.json`); anything else is rejected.
 - Reading YAML requires the optional `yaml` extra:
   `pip install "ai-opticore[yaml]"`.

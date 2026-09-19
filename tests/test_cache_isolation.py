@@ -64,10 +64,12 @@ def test_aiclient_measures_overhead_and_model_time() -> None:
     result = client.generate(prompt="hello there")
     assert result.total_time_ms >= 0
     assert result.optimizer_time_ms >= 0
+    assert result.cache_lookup_ms >= 0
     assert result.model_time_ms >= 0
-    assert abs(
-        result.total_time_ms - (result.optimizer_time_ms + result.model_time_ms)
-    ) <= 0.01
+    assert result.request_id
+    assert result.total_time_ms >= (
+        result.optimizer_time_ms + result.cache_lookup_ms + result.model_time_ms
+    )
 
 
 def test_aiclient_temperature_isolation_no_cross_cache() -> None:

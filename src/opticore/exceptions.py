@@ -27,6 +27,10 @@ class CacheError(OptiCoreError):
     """Raised when a cache backend fails outside of a best-effort path."""
 
 
+class RoutingError(OptiCoreError):
+    """Raised when no eligible model can be selected for a request."""
+
+
 class ProviderError(OptiCoreError):
     """Base class for provider failures."""
 

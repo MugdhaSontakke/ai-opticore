@@ -26,25 +26,32 @@ export interface BenchmarkData {
   notes: string[];
 }
 
-const SAMPLE_DATA: BenchmarkData = {
-  model: "gpt-4o-mini",
-  provider: "openai",
-  hardware: "cpu",
-  samples: 3,
-  baseline: { input_tokens: 42, output_tokens: 11, latency_ms: 823.4 },
-  optimized: { input_tokens: 38, output_tokens: 11, latency_ms: 791.2 },
+// DEMO DATA — explicitly labeled. It only demonstrates the file shape and is
+// NEVER presented as a measured result. Improvement claims are N/A.
+const DEMO_DATA: BenchmarkData = {
+  model: "example-model",
+  provider: "example-provider",
+  hardware: "example-backend",
+  samples: 0,
+  baseline: { input_tokens: null, output_tokens: null, latency_ms: null },
+  optimized: { input_tokens: null, output_tokens: null, latency_ms: null },
   metrics: {
-    token_reduction_percent: "9.52%",
-    latency_change_percent: "-3.91%",
+    token_reduction_percent: "N/A",
+    latency_change_percent: "N/A",
     cache_hit_rate: "N/A",
-    avg_tokens_saved_per_request: 4,
-    summary: { counters: { request_count: 3 } },
+    avg_tokens_saved_per_request: 0,
+    summary: { counters: {} },
   },
-  notes: [],
+  notes: [
+    "DEMO / SAMPLE DATA — no benchmark was run. Load a real ai-opticore benchmark --json output file to see measured results.",
+  ],
 };
+
+type DataKind = "none" | "demo" | "real";
 
 export default function App() {
   const [data, setData] = useState<BenchmarkData | null>(null);
+  const [kind, setKind] = useState<DataKind>("none");
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -55,6 +62,7 @@ export default function App() {
     reader.onload = () => {
       try {
         setData(JSON.parse(reader.result as string));
+        setKind("real");
         setError(null);
       } catch {
         setError("Invalid JSON file");
@@ -63,22 +71,33 @@ export default function App() {
     reader.readAsText(file);
   }
 
+  function loadDemo() {
+    setData(DEMO_DATA);
+    setKind("demo");
+    setError(null);
+  }
+
+  const badge =
+    kind === "real" ? (
+      <span style={{ color: "green", fontWeight: 600 }}>REAL MEASURED DATA</span>
+    ) : kind === "demo" ? (
+      <span style={{ color: "darkorange", fontWeight: 600 }}>DEMO / SAMPLE DATA</span>
+    ) : null;
+
   return (
     <div style={{ padding: "2rem", fontFamily: "system-ui, sans-serif", maxWidth: 900, margin: "0 auto" }}>
       <header style={{ marginBottom: "1.5rem" }}>
         <h1 style={{ margin: 0 }}>AI-OptiCore Dashboard</h1>
         <p style={{ color: "#666", margin: "0.5rem 0 0 0" }}>
-          Benchmark results viewer — load a <code>--json</code> benchmark output file
+          Benchmark results viewer — load a real <code>--json</code> benchmark output file
         </p>
+        {badge && <div style={{ marginTop: "0.75rem" }}>{badge}</div>}
       </header>
 
       <div style={{ marginBottom: "1.5rem" }}>
         <input ref={inputRef} type="file" accept=".json" onChange={handleFile} />
-        <button
-          style={{ marginLeft: "0.5rem", padding: "0.4rem 0.8rem" }}
-          onClick={() => setData(SAMPLE_DATA)}
-        >
-          Load sample data
+        <button style={{ marginLeft: "0.5rem", padding: "0.4rem 0.8rem" }} onClick={loadDemo}>
+          Load demo data
         </button>
       </div>
 
