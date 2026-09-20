@@ -6,21 +6,39 @@ export interface BenchmarkData {
   provider: string;
   hardware: string;
   samples: number;
+  dataset?: string;
+  environment?: {
+    timestamp?: string;
+    opticore_version?: string;
+    python_version?: string;
+    os?: string;
+  };
   baseline: {
     input_tokens: number | null;
     output_tokens: number | null;
     latency_ms: number | null;
+    latency_median_ms?: number | null;
+    latency_p95_ms?: number | null;
   };
   optimized: {
     input_tokens: number | null;
     output_tokens: number | null;
     latency_ms: number | null;
+    latency_median_ms?: number | null;
+    latency_p95_ms?: number | null;
   };
   metrics: {
     token_reduction_percent: string | number;
     latency_change_percent: string | number;
     cache_hit_rate: string | number;
     avg_tokens_saved_per_request: number;
+    optimizer_overhead_ms_avg?: number | null;
+    provider_latency_ms_avg?: number | null;
+    quality_score_avg?: string | number;
+    estimated_cost_baseline?: string | number;
+    estimated_cost_optimized?: string | number;
+    estimated_cost_savings?: string | number;
+    scenarios?: Record<string, unknown>;
     summary: Record<string, unknown>;
   };
   notes: string[];
@@ -82,7 +100,9 @@ export default function App() {
       <span style={{ color: "green", fontWeight: 600 }}>REAL MEASURED DATA</span>
     ) : kind === "demo" ? (
       <span style={{ color: "darkorange", fontWeight: 600 }}>DEMO / SAMPLE DATA</span>
-    ) : null;
+    ) : (
+      <span style={{ color: "#888", fontWeight: 600 }}>DATA UNAVAILABLE</span>
+    );
 
   return (
     <div style={{ padding: "2rem", fontFamily: "system-ui, sans-serif", maxWidth: 900, margin: "0 auto" }}>
@@ -103,7 +123,24 @@ export default function App() {
 
       {error && <div style={{ color: "crimson", marginBottom: "1rem" }}>{error}</div>}
 
-      {data ? <BenchmarkView data={data} /> : <p>No data loaded.</p>}
+      {data ? (
+        <BenchmarkView data={data} />
+      ) : (
+        <div
+          style={{
+            padding: "1rem",
+            border: "1px dashed #ccc",
+            borderRadius: 8,
+            color: "#777",
+          }}
+        >
+          <p style={{ margin: 0 }}>
+            No benchmark data loaded. Status: <strong>UNAVAILABLE</strong> —
+            upload a real <code>ai-opticore benchmark --json</code> output file
+            or load the demo data to preview the layout.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

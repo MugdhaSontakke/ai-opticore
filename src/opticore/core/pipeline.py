@@ -46,10 +46,15 @@ class OptimizationPipeline:
         optimizers: list[Optimizer] | None = None,
         config: OptimizationConfig | None = None,
         tokenizer: Tokenizer | None = None,
+        strict_optimizers: bool = False,
     ) -> None:
         self.optimizers = sorted(optimizers or [], key=lambda o: o.order)
         self.config = config or OptimizationConfig()
         self.tokenizer = tokenizer or Tokenizer()
+        # When True, ANY optimizer failure aborts the pipeline instead of
+        # being logged and skipped. Default (False) preserves the resilience
+        # contract: a buggy optimizer must not take a production request down.
+        self.strict_optimizers = strict_optimizers
 
     def add(self, optimizer: Optimizer) -> None:
         """Register an optimizer and keep the list sorted by ``order``."""
@@ -94,8 +99,24 @@ class OptimizationPipeline:
             try:
                 outcome = optimizer.optimize(current, self.config)
             except OptimizationError as exc:
+                if self.strict_optimizers:
+                    raise
                 optimizer_errors.append(f"{optimizer.name}: {exc}")
                 logger.warning("optimizer %s skipped: %s", optimizer.name, exc)
+                continue
+            except Exception as exc:  # noqa: BLE001 - resilience contract
+                if self.strict_optimizers:
+                    raise OptimizationError(
+                        f"optimizer {optimizer.name} raised an unexpected "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
+                detail = f"{type(exc).__name__}: {exc}"
+                optimizer_errors.append(f"{optimizer.name}: {detail}")
+                logger.warning(
+                    "optimizer %s crashed and was skipped: %s",
+                    optimizer.name,
+                    detail,
+                )
                 continue
             elapsed_ms = (time.monotonic() - started) * 1000.0
             timing[outcome.optimizer_name or optimizer.name] = round(elapsed_ms, 3)

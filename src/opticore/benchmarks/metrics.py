@@ -15,12 +15,33 @@ from typing import Any
 Aggregator = Callable[[list[float]], float]
 
 
+def percentile(values: list[float], p: float) -> float:
+    """Deterministic linear-interpolation percentile (p in [0, 1]).
+
+    Used instead of ``statistics.quantiles`` so results are stable and easy
+    to test (nearest-rank interpolation when ``(n-1)*p`` is integral).
+    """
+    if not values:
+        raise ValueError("percentile of an empty series is undefined")
+    data = sorted(values)
+    k = (len(data) - 1) * p
+    low = int(k)
+    high = low + 1
+    if high >= len(data):
+        return data[-1]
+    frac = k - low
+    return data[low] + (data[high] - data[low]) * frac
+
+
 @dataclass
 class MetricsCollector:
     """Tracks both counters and value series.
 
     - Counters accumulate integers (requests, hits, errors).
-    - Series accumulate floats and expose min/max/sum/mean.
+    - Series accumulate floats and expose min/max/sum/mean plus p50/p95.
+
+    Series are bounded: only the most recent ``max_series_len`` samples are
+    kept so memory usage is flat even under sustained load.
     """
 
     counters: dict[str, int] = field(default_factory=dict)
@@ -28,6 +49,11 @@ class MetricsCollector:
     started_at: float = field(default_factory=time.monotonic)
     _custom_aggregators: dict[str, Aggregator] = field(default_factory=dict)
     _lock: threading.RLock = field(default_factory=threading.RLock)
+    max_series_len: int = 1000
+
+    def __post_init__(self) -> None:
+        if self.max_series_len < 1:
+            raise ValueError("max_series_len must be >= 1")
 
     def incr(self, key: str, amount: int = 1) -> None:
         """Increment a named counter."""
@@ -35,9 +61,12 @@ class MetricsCollector:
             self.counters[key] = self.counters.get(key, 0) + amount
 
     def record(self, key: str, value: float) -> None:
-        """Append a value to a named series."""
+        """Append a value to a named series (kept bounded by max_series_len)."""
         with self._lock:
-            self.series.setdefault(key, []).append(value)
+            bucket = self.series.setdefault(key, [])
+            bucket.append(value)
+            if len(bucket) > self.max_series_len:
+                del bucket[0 : len(bucket) - self.max_series_len]
 
     def register_custom_aggregator(self, key: str, fn: Aggregator) -> None:
         """Register a custom aggregator for a named series."""
@@ -59,6 +88,9 @@ class MetricsCollector:
                     "sum": sum(values),
                     "mean": sum(values) / len(values),
                 }
+                if len(values) >= 4:
+                    summary["p50"] = round(percentile(values, 0.5), 6)
+                    summary["p95"] = round(percentile(values, 0.95), 6)
                 agg = self._custom_aggregators.get(key)
                 if agg:
                     summary["custom"] = agg(values)
@@ -77,7 +109,12 @@ class MetricsCollector:
             for k, v in other.counters.items():
                 self.counters[k] = self.counters.get(k, 0) + v
             for k, values in other.series.items():
-                self.series.setdefault(k, []).extend(values)
+                target = self.series.get(k)
+                if target is None:
+                    target = self.series[k] = []
+                target.extend(values)
+                if len(target) > self.max_series_len:
+                    del target[0 : len(target) - self.max_series_len]
 
 
 def accumulate_tokens(collector: MetricsCollector, original: int, optimized: int) -> None:

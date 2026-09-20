@@ -19,7 +19,11 @@ class OptimizationError(OptiCoreError):
     """Raised when an optimizer fails during request transformation."""
 
 
-class QualityEvaluationError(OptiCoreError):
+class EvaluationError(OptiCoreError):
+    """Base class for evaluation failures (quality gates, similarity checks)."""
+
+
+class QualityEvaluationError(EvaluationError):
     """Raised when a quality evaluation cannot be computed."""
 
 
@@ -45,6 +49,23 @@ class ProviderRateError(ProviderError):
 
 class ProviderTimeoutError(ProviderError):
     """Raised when a provider call exceeds its configured timeout."""
+
+
+class ProviderUnavailableError(ProviderError):
+    """Raised when a provider cannot be reached or fails transiently.
+
+    Covers connection failures and transient server errors (5xx) that remain
+    after the configured retry budget is exhausted.
+    """
+
+
+class ProviderResponseError(ProviderError):
+    """Raised when a provider returns a malformed or invalid response.
+
+    This includes missing fields, empty completion choices, and unparseable
+    bodies — anything that prevents a usable :class:`AIResponse` from being
+    constructed.
+    """
 
 
 class UnsupportedModelError(OptiCoreError):

@@ -142,3 +142,43 @@ def test_cli_optimize_rejects_secret_config(tmp_path: Path) -> None:
     result = run_cli("optimize", "--prompt", "hi", "--config", str(bad_config))
     assert result.returncode != 0
     assert "Do not store API keys" in result.stderr
+
+
+def test_cli_config_validate_default() -> None:
+    result = run_cli("config", "validate")
+    assert result.returncode == 0
+    assert "valid" in result.stdout
+
+
+def test_cli_config_validate_json() -> None:
+    result = run_cli("config", "validate", "--json")
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+
+
+def test_cli_config_validate_rejects_secrets(tmp_path: Path) -> None:
+    bad_config = tmp_path / "opticore.yaml"
+    bad_config.write_text("max_token_budget: 100\ntoken: sk-secret-here\n")
+    result = run_cli("config", "validate", "--config", str(bad_config))
+    assert result.returncode != 0
+    assert "Do not store API keys" in result.stdout + result.stderr
+
+
+def test_cli_config_validate_missing_file(tmp_path: Path) -> None:
+    result = run_cli("config", "validate", "--config", str(tmp_path / "nope.yaml"))
+    assert result.returncode != 0
+
+
+def test_cli_cache_stats_text() -> None:
+    result = run_cli("cache", "stats")
+    assert result.returncode == 0
+    assert "Backend:" in result.stdout
+
+
+def test_cli_cache_stats_json() -> None:
+    result = run_cli("cache", "stats", "--json")
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert "base" in payload
+    assert "semantic" in payload

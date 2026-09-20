@@ -6,8 +6,10 @@ import time
 from typing import Any
 
 from opticore.core.config import ProviderConfig
+from opticore.exceptions import ProviderError, ProviderResponseError
 from opticore.logging import get_logger
-from opticore.providers.base import BaseProvider, ProviderError, ProviderResponse
+from opticore.providers.base import BaseProvider, ProviderResponse
+from opticore.security import redact_text
 
 logger = get_logger("opticore.providers.huggingface")
 
@@ -77,9 +79,21 @@ class HuggingFaceProvider(BaseProvider):
             outputs = self._pipeline(prompt, **kwargs)
             elapsed_ms = (time.monotonic() - started) * 1000
         except Exception as exc:  # noqa: BLE001
-            raise ProviderError(f"HuggingFace generation failed: {exc}") from exc
+            raise ProviderError(
+                f"HuggingFace generation failed: {redact_text(str(exc))}"
+            ) from exc
 
-        generated = outputs[0]["generated_text"] if outputs else prompt
+        if not outputs:
+            raise ProviderResponseError(
+                "HuggingFace pipeline returned no outputs for the prompt."
+            )
+        first = outputs[0]
+        if not isinstance(first, dict) or "generated_text" not in first:
+            raise ProviderResponseError(
+                "HuggingFace pipeline returned an unexpected output shape "
+                f"({type(first).__name__}); expected a dict with 'generated_text'."
+            )
+        generated = first.get("generated_text") or ""
         content = generated[len(prompt):].strip() if generated.startswith(prompt) else generated
         model = self.config.model or "unknown"
         return ProviderResponse(

@@ -261,6 +261,12 @@ class AIClient:
         provider_config = getattr(self.provider, "config", None)
         provider_model = getattr(provider_config, "model", None)
         active_model = model or provider_model or "unknown"
+        logger.debug(
+            "request %s started provider=%s model=%s",
+            request_id,
+            self.provider.name,
+            active_model,
+        )
 
         fallback_reason: str | None = None
         routing_decision: dict[str, Any] | None = None
@@ -392,6 +398,18 @@ class AIClient:
 
         output_tokens = response.output_tokens if response else 0
         input_tokens = response.input_tokens if response else 0
+        logger.info(
+            "request %s done cache_hit=%s fallback=%s model_time_ms=%.1f "
+            "optimizer_time_ms=%.1f total_time_ms=%.1f tokens_in=%d tokens_out=%d",
+            request_id,
+            cache_hit,
+            bool(fallback_reason),
+            model_time_ms,
+            optimizer_time_ms,
+            total_time_ms,
+            input_tokens,
+            output_tokens,
+        )
         baseline_cost = self.cost_estimator.estimate(original_tokens, output_tokens)
         optimized_cost = self.cost_estimator.estimate(optimized_tokens, output_tokens)
         savings = self.cost_estimator.savings(baseline_cost, optimized_cost)

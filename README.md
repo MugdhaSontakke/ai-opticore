@@ -234,8 +234,8 @@ Detection never fakes results. If a backend is unavailable, a clear capability m
 - [x] Initial hardening toward v0.1 (quality gate with safe fallback, overhead measurement, cache isolation, secret-safe logging)
 - [x] v0.1 hardening pass 2 (real provider analytics, per-step timing, honest timing/caching, `ai-opticore` exit codes)
 - [x] v0.1.0 — Disk cache backend (SQLite), estimated-cost accounting, per-scenario benchmarks, provider regression test framework, observability (request IDs, routing/quality/fallback metadata), dashboard REAL-vs-DEMO labeling
-- [ ] v0.2 — Live-provider matrix validated per release; SSRF guardrails; Docker compose + healthcheck
-- [ ] v0.2 — Mock-based unit tests for provider SDK request/error paths
+- [x] v0.2.0 — SSRF guardrails (`validate_base_url`), provider retry policy with typed error mapping, request redaction, config `validate`, cache `stats`, benchmark `--dataset`, dashboard DATA UNAVAILABLE state + median/p95/overhead/cost rendering, Docker (non-root image, compose with optional Ollama), `docs/api_stability.md`
+- [ ] v0.2 — Live-provider matrix validated per release; mock-based unit tests for provider SDK request/error paths
 - [ ] v0.3 — Redis cache backend; real batched inference executor
 - [ ] v0.3 — Response-level quality gate with a judge/similarity model (optional path)
 - [ ] v0.4 — Dashboard with live metrics (see `dashboard/`)

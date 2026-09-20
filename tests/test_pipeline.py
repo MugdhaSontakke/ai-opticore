@@ -2,9 +2,44 @@
 
 from __future__ import annotations
 
+import pytest
+
 from opticore.core.config import OptimizationConfig, ProviderConfig, SafetyMode
-from opticore.core.interfaces import OptimizerRequest
-from opticore.core.pipeline import build_default_pipeline
+from opticore.core.interfaces import Optimizer, OptimizerRequest, OptimizerResult
+from opticore.core.pipeline import OptimizationPipeline, build_default_pipeline
+from opticore.exceptions import OptimizationError
+from opticore.optimizers.token import Tokenizer
+
+
+class CrashOptimizer(Optimizer):
+    name = "crash"
+    order = 0
+
+    def optimize(self, request: OptimizerRequest, config: OptimizationConfig) -> OptimizerResult:  # type: ignore[override]
+        raise RuntimeError("unexpected internal crash")
+
+
+class OkOptimizer(CrashOptimizer):
+    name = "ok"
+    order = 1
+
+    def optimize(self, request: OptimizerRequest, config: OptimizationConfig) -> OptimizerResult:  # type: ignore[override]
+        return OptimizerResult(
+            optimized_request=request,
+            original_request=request,
+            original_tokens=request.prompt.count(" "),
+            optimized_tokens=request.prompt.count(" "),
+            optimizer_name=self.name,
+            optimizers_run=[self.name],
+            tokens_saved=0,
+            reduction_percent=0.0,
+            changes=[],
+            metrics={},
+            metadata={},
+            optimization_time_ms=0.0,
+            accepted=True,
+            rejection_reason=None,
+        )
 
 
 def test_safety_mode_value_stability() -> None:
@@ -63,3 +98,24 @@ def test_provider_config() -> None:
     assert config.provider == "openai"
     assert config.model == "gpt-4o"
     assert config.api_key_env == "MY_KEY"
+
+
+def test_pipeline_skips_crashing_optimizer_by_default() -> None:
+    pipeline = OptimizationPipeline(
+        optimizers=[CrashOptimizer(), OkOptimizer()],
+        tokenizer=Tokenizer(),
+    )
+    result = pipeline.run(prompt="a b c", system="s")
+    assert result.optimized_request.prompt == "a b c"
+    assert result.metadata.get("optimizer_errors")
+    assert any("crash" in err for err in result.metadata["optimizer_errors"])
+
+
+def test_pipeline_strict_mode_raises_on_crash() -> None:
+    pipeline = OptimizationPipeline(
+        optimizers=[CrashOptimizer()],
+        tokenizer=Tokenizer(),
+        strict_optimizers=True,
+    )
+    with pytest.raises(OptimizationError, match="crash"):
+        pipeline.run(prompt="a b c", system="s")

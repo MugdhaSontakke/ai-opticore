@@ -53,6 +53,8 @@ class DiskCache(BaseCache):
         self._lock = threading.RLock()
         self.hits = 0
         self.misses = 0
+        self.evictions = 0
+        self.invalidations = 0
         parent = os.path.dirname(os.path.abspath(self.path))
         if parent and not os.path.isdir(parent):
             os.makedirs(parent, exist_ok=True)
@@ -77,7 +79,10 @@ class DiskCache(BaseCache):
                 finally:
                     conn.close()
             except sqlite3.Error as exc:
-                raise CacheError(f"DiskCache init failed: {exc}") from exc
+                raise CacheError(
+                    f"DiskCache {self.path} is not a usable SQLite database: {exc}. "
+                    "Delete the file or point the cache at a fresh path."
+                ) from exc
 
     def get(self, key: str) -> CacheEntry | None:
         with self._lock:
@@ -93,10 +98,18 @@ class DiskCache(BaseCache):
                         self.misses += 1
                         return None
                     entry = self._row_to_entry(row)
+                    # Convert the wall-clock TTL (persisted) to the in-process
+                    # monotonic timeline so CacheEntry.expired stays correct
+                    # across process restarts (monotonic resets on restart).
+                    if entry.expires_at is not None:
+                        offset = time.time() - time.monotonic()
+                        entry.expires_at -= offset
+                        entry.created_at -= offset
                     if entry.expired:
                         conn.execute("DELETE FROM cache_entries WHERE key = ?", (key,))
                         conn.commit()
                         self.misses += 1
+                        self.invalidations += 1
                         return None
                     self.hits += 1
                     return entry
@@ -117,7 +130,9 @@ class DiskCache(BaseCache):
             try:
                 conn = self._connect()
                 try:
-                    now = time.monotonic()
+                    # Wall-clock timestamps keep TTL correct across process
+                    # restarts (time.monotonic() resets on restart).
+                    now = time.time()
                     expires = now + ttl_seconds if ttl_seconds is not None else None
                     conn.execute(
                         "INSERT INTO cache_entries "
@@ -137,12 +152,13 @@ class DiskCache(BaseCache):
                         ),
                     )
                     if self._max_entries > 0:
-                        conn.execute(
+                        cursor = conn.execute(
                             "DELETE FROM cache_entries WHERE key NOT IN ("
                             "SELECT key FROM cache_entries ORDER BY created_at DESC "
                             f"LIMIT {int(self._max_entries)}"
                             ")"
                         )
+                        self.evictions += max(0, cursor.rowcount or 0)
                     conn.commit()
                 finally:
                     conn.close()
@@ -182,7 +198,7 @@ class DiskCache(BaseCache):
                     row = conn.execute(
                         "SELECT COUNT(*) FROM cache_entries WHERE "
                         "(expires_at IS NULL OR expires_at > ?)",
-                        (time.monotonic(),),
+                        (time.time(),),
                     ).fetchone()
                     active = int(row[0] if row else 0)
                     return {
@@ -191,6 +207,8 @@ class DiskCache(BaseCache):
                         "size": active,
                         "hits": self.hits,
                         "misses": self.misses,
+                        "evictions": self.evictions,
+                        "invalidations": self.invalidations,
                         "hit_rate": self.hits / (self.hits + self.misses)
                         if (self.hits + self.misses)
                         else 0.0,

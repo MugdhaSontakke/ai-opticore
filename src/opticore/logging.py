@@ -26,6 +26,26 @@ LOG_PROMPTS = os.environ.get("OPTICORE_LOG_PROMPTS", "0") == "1"
 _REDACTED = "<redacted>"
 
 
+def redact_text(message: str) -> str:
+    """Redact likely secrets from a message (logs, exceptions, reports)."""
+    if not message:
+        return message
+    out = str(message)
+    lowered = out.lower()
+    for key in _SENSITIVE_KEYS:
+        marker = f"{key}="
+        if marker in lowered:
+            out = re.sub(
+                rf"{re.escape(key)}=[^\s,;\"']+",
+                f"{key}={_REDACTED}",
+                out,
+                flags=re.IGNORECASE,
+            )
+    for pattern in _SECRET_PATTERNS:
+        out = pattern.sub(_REDACTED, out)
+    return out
+
+
 class RedactingFilter(logging.Filter):
     """Redacts likely-sensitive secrets from log records.
 
@@ -36,21 +56,14 @@ class RedactingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if not record.getMessage():
             return True
-        record.msg = self._redact(record.getMessage())
+        record.msg = redact_text(record.getMessage())
         record.args = ()
         return True
 
     @staticmethod
     def _redact(message: str) -> str:
-        out = message
-        lowered = out.lower()
-        for key in _SENSITIVE_KEYS:
-            marker = f"{key}="
-            if marker in lowered:
-                out = re.sub(rf"{re.escape(key)}=[^\s,;\"']+", f"{key}={_REDACTED}", out, flags=re.IGNORECASE)
-        for pattern in _SECRET_PATTERNS:
-            out = pattern.sub(_REDACTED, out)
-        return out
+        # Backward-compatible alias; prefer the public helper.
+        return redact_text(message)
 
 
 def log_prompt_content(

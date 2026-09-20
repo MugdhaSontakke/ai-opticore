@@ -139,3 +139,63 @@ def test_disk_cache_key_is_namespace_isolated(tmp_path: pytest.TempPathFactory) 
     assert k1 != k2
     cache.set(k1, "ns1 result", "m")
     assert cache.get(k2) is None
+
+
+def test_disk_cache_ttl_survives_restart(tmp_path: pytest.TempPathFactory) -> None:
+    """TTL must stay correct across a process restart (wall-clock timestamps).
+
+    Regression: storing `time.monotonic()` made entries appear perpetually
+    fresh after a restart because monotonic resets to ~0 while the stored
+    value keeps its old scale. We simulate a restarted process with a fresh
+    monotonic timeline and a row expired in wall-clock time.
+    """
+    import sqlite3
+    import time
+
+    path = str(tmp_path / "restart.sqlite")
+    # Seed the DB the way a complete write happens (wall-clock timestamps).
+    cache = DiskCache(path)
+    cache.set("alive", "still valid", "m", ttl_seconds=3600)
+    cache.set("dead", "expired long ago", "m", ttl_seconds=3600)
+
+    # Rewrite "dead" as expired in wall-clock time, as a later process would
+    # see it after several hours of downtime.
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "UPDATE cache_entries SET created_at=?, expires_at=? WHERE key=?",
+        (time.time() - 7200, time.time() - 60, "dead"),
+    )
+    conn.commit()
+    conn.close()
+
+    # A brand-new instance = a restarted process (fresh monotonic clock).
+    restarted = DiskCache(path)
+    assert restarted.get("alive") is not None
+    assert restarted.get("dead") is None
+    assert restarted.invalidations >= 1
+    assert restarted.stats()["size"] == 1
+
+
+def test_disk_cache_evictions_and_invalidations_counters(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    cache = DiskCache(str(tmp_path / "evict.sqlite"), max_entries=2)
+    for i in range(5):
+        cache.set(f"k{i}", f"v{i}", "m")
+    assert cache.evictions >= 3
+    assert cache.stats()["size"] <= 2
+    assert "evictions" in cache.stats()
+
+    import sqlite3
+    import time
+
+    conn = sqlite3.connect(str(tmp_path / "evict.sqlite"))
+    conn.execute(
+        "INSERT INTO cache_entries (key, content, model, created_at, expires_at, "
+        "metadata) VALUES (?, ?, ?, ?, ?, ?)",
+        ("expired-after-restart", "gone", "m", time.time() - 100, time.time() - 1, "{}"),
+    )
+    conn.commit()
+    conn.close()
+    assert cache.get("expired-after-restart") is None
+    assert cache.invalidations >= 1

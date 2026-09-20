@@ -450,8 +450,11 @@ class BenchmarkRunner:
 def load_benchmark_dataset(path: str) -> list[OptimizerRequest]:
     """Load benchmark samples (with optional scenarios) from a JSON file.
 
-    Each entry accepts ``prompt``, ``system``, ``messages``, ``tools`` and a
-    ``scenario`` tag. Raises when the file is missing or malformed.
+    Each entry accepts ``prompt``, optional ``system``/``messages``/``tools``,
+    and a ``scenario`` tag. The dataset schema also maps ``category`` to
+    ``scenario`` and keeps ``id``/``expected_keywords`` in the sample metadata
+    for traceability (the keyword lists can be reused by evaluators). Raises
+    when the file is missing or malformed.
     """
     import json
 
@@ -466,8 +469,15 @@ def load_benchmark_dataset(path: str) -> list[OptimizerRequest]:
         if not isinstance(entry, dict) or not isinstance(entry.get("prompt"), str):
             raise ValueError(f"Dataset entry {i} must be a dict with a 'prompt' string")
         metadata: dict[str, Any] = {}
-        if isinstance(entry.get("scenario"), str):
-            metadata["scenario"] = entry["scenario"]
+        scenario = entry.get("scenario") or entry.get("category")
+        if isinstance(scenario, str):
+            metadata["scenario"] = scenario
+        sample_id = entry.get("id")
+        if isinstance(sample_id, str):
+            metadata["id"] = sample_id
+        keywords = entry.get("expected_keywords")
+        if isinstance(keywords, list):
+            metadata["expected_keywords"] = list(keywords)
         samples.append(
             OptimizerRequest(
                 prompt=entry["prompt"],

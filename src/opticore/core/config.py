@@ -228,6 +228,10 @@ class ProviderConfig:
         base_url: str | None = None,
         timeout_seconds: float = 60.0,
         max_retries: int = 3,
+        backoff_base_seconds: float = 0.5,
+        backoff_max_seconds: float = 8.0,
+        allow_private_networks: bool = True,
+        allowed_hosts: list[str] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> None:
         if not provider:
@@ -236,12 +240,28 @@ class ProviderConfig:
             raise ConfigurationError("timeout_seconds must be > 0")
         if max_retries < 0:
             raise ConfigurationError("max_retries must be >= 0")
+        if backoff_base_seconds < 0:
+            raise ConfigurationError("backoff_base_seconds must be >= 0")
+        if backoff_max_seconds < backoff_base_seconds:
+            raise ConfigurationError(
+                "backoff_max_seconds must be >= backoff_base_seconds"
+            )
         self.provider = provider
         self.model = model
         self.api_key_env = api_key_env
         self.base_url = base_url
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
+        # ``max_attempts`` (total tries) derives from ``max_retries`` (retries
+        # after the first call) so the configured knob keeps its meaning.
+        self.max_attempts = max_retries + 1
+        self.backoff_base_seconds = backoff_base_seconds
+        self.backoff_max_seconds = backoff_max_seconds
+        # SSRF guardrails: private/loopback networks are allowed by default so
+        # local Ollama/vLLM/llama.cpp servers keep working; tighten with
+        # ``allow_private_networks=False`` and/or ``allowed_hosts``.
+        self.allow_private_networks = allow_private_networks
+        self.allowed_hosts = allowed_hosts
         self.extra = extra or {}
 
 
@@ -250,18 +270,41 @@ def default_config() -> OptimizationConfig:
     return OptimizationConfig()
 
 
-def _apply_env_overrides(config: OptimizationConfig) -> OptimizationConfig:
-    """Apply ``OPTICORE_*`` environment overrides on top of a config."""
+def _apply_env_overrides(
+    config: OptimizationConfig, explicit_keys: set[str] | None = None
+) -> OptimizationConfig:
+    """Apply ``OPTICORE_*`` environment overrides on top of a config.
+
+    Precedence (highest wins): explicit Python/CLI value > configuration file
+    > environment variable > default. Keys already set explicitly by the
+    configuration file (``explicit_keys``) are therefore *not* overridden by
+    environment variables.
+    """
+    explicit = explicit_keys or set()
+
+    def _allowed_set(*names: str) -> bool:
+        return not any(name in explicit for name in names)
+
     try:
-        if (value := os.environ.get("OPTICORE_SAFETY_MODE")) is not None:
+        if (value := os.environ.get("OPTICORE_SAFETY_MODE")) is not None and _allowed_set(
+            "safety_mode"
+        ):
             config.safety_mode = SafetyMode(value)
-        if (value := os.environ.get("OPTICORE_MAX_TOKEN_BUDGET")) is not None:
+        if (value := os.environ.get("OPTICORE_MAX_TOKEN_BUDGET")) is not None and _allowed_set(
+            "max_token_budget"
+        ):
             config.max_token_budget = int(value)
-        if (value := os.environ.get("OPTICORE_SEMANTIC_CACHE_THRESHOLD")) is not None:
+        if (
+            value := os.environ.get("OPTICORE_SEMANTIC_CACHE_THRESHOLD")
+        ) is not None and _allowed_set("semantic_cache_threshold"):
             config.semantic_cache_threshold = float(value)
-        if (value := os.environ.get("OPTICORE_CACHE_TTL_SECONDS")) is not None:
+        if (value := os.environ.get("OPTICORE_CACHE_TTL_SECONDS")) is not None and _allowed_set(
+            "cache_ttl_seconds"
+        ):
             config.cache_ttl_seconds = float(value)
-        if (value := os.environ.get("OPTICORE_QUALITY_MINIMUM_SCORE")) is not None:
+        if (
+            value := os.environ.get("OPTICORE_QUALITY_MINIMUM_SCORE")
+        ) is not None and _allowed_set("quality_minimum_score"):
             config.quality_minimum_score = float(value)
         for flag in (
             "enable_semantic_cache",
@@ -274,15 +317,41 @@ def _apply_env_overrides(config: OptimizationConfig) -> OptimizationConfig:
             "log_prompts",
         ):
             env_name = f"OPTICORE_{flag.upper()}"
-            if (value := os.environ.get(env_name)) is not None:
+            if (value := os.environ.get(env_name)) is not None and _allowed_set(flag):
                 setattr(config, flag, value.lower() in ("1", "true", "yes", "on"))
         return config
     except (ValueError, TypeError) as exc:
         raise ConfigurationError(f"Environment override invalid: {exc}") from exc
 
 
+def _explicit_keys_from_data(data: dict[str, Any]) -> set[str]:
+    """Return the set of config keys explicitly present in the loaded file.
+
+    The nested ``quality``/``pricing`` blocks are flattened to the same names
+    used by :meth:`OptimizationConfig.from_dict`.
+    """
+    keys = {k for k, v in data.items() if not isinstance(v, dict)}
+    quality = data.get("quality")
+    if isinstance(quality, dict):
+        keys.update({f"quality_{k}" for k in quality})
+    pricing = data.get("pricing")
+    if isinstance(pricing, dict):
+        aliases = {
+            "input_per_1k": "pricing_input_per_1k",
+            "input_cost_per_1k_tokens": "pricing_input_per_1k",
+            "output_per_1k": "pricing_output_per_1k",
+            "output_cost_per_1k_tokens": "pricing_output_per_1k",
+        }
+        for key in pricing:
+            keys.add(aliases.get(key, f"pricing_{key}"))
+    return keys
+
+
 def load_config(path: str | None = None, *, use_env: bool = True) -> OptimizationConfig:
     """Load configuration from a YAML/JSON file plus optional env overrides.
+
+    Precedence (highest wins): explicit Python/CLI value > configuration file
+    > environment variable > default.
 
     Secrets are not read here; ``api_key``-like keys in a file are rejected
     with a warning-level :class:`ConfigurationError` because AI-OptiCore never
@@ -328,9 +397,10 @@ def load_config(path: str | None = None, *, use_env: bool = True) -> Optimizatio
             )
 
     # Support a nested {"provider": ...} block without losing it.
+    explicit_keys = _explicit_keys_from_data(data)
     config = OptimizationConfig.from_dict(data)
     if use_env:
-        config = _apply_env_overrides(config)
+        config = _apply_env_overrides(config, explicit_keys)
     return config
 
 
@@ -356,7 +426,7 @@ def config_template() -> dict[str, Any]:
             "reject_on_failure": False,
             "evaluator": "character",
         },
-"log_prompts": False,
+        "log_prompts": False,
         "pricing": {
             "input_per_1k": 0.0,
             "output_per_1k": 0.0,

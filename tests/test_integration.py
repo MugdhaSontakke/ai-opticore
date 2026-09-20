@@ -97,7 +97,11 @@ def test_benchmark_runner_with_fake() -> None:
     result = runner.run()
     render = result.render()
     assert "AI-OptiCore Benchmark" in render
-    assert result.metrics["token_reduction_percent"] != "N/A" or True  # sizes may tie
+    # The reduction must be a real measured percentage (never the vacuous pass
+    # "N/A or True" style assertion that used to exist here).
+    reduction = result.metrics["token_reduction_percent"]
+    assert isinstance(reduction, str) and reduction.endswith("%")
+    assert result.baseline["latency_ms"] is not None
     assert "Model: fake-model" in render
 
 

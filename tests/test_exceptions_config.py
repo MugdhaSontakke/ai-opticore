@@ -7,9 +7,13 @@ import pytest
 from opticore import (
     CacheError,
     ConfigurationError,
+    EvaluationError,
     OptiCoreError,
     OptimizationConfig,
+    ProviderResponseError,
     ProviderTimeoutError,
+    ProviderUnavailableError,
+    QualityEvaluationError,
     UnsupportedModelError,
 )
 from opticore.core.config import ProviderConfig, load_config
@@ -20,6 +24,18 @@ def test_all_errors_share_base() -> None:
     assert issubclass(ConfigurationError, OptiCoreError)
     assert issubclass(CacheError, OptiCoreError)
     assert issubclass(ProviderTimeoutError, OptiCoreError)
+
+
+def test_provider_reliability_exceptions_are_typed() -> None:
+    assert issubclass(ProviderUnavailableError, OptiCoreError)
+    assert issubclass(ProviderResponseError, OptiCoreError)
+    assert issubclass(ProviderUnavailableError, __import__("opticore").ProviderError)
+    assert issubclass(ProviderResponseError, __import__("opticore").ProviderError)
+
+
+def test_evaluation_error_hierarchy() -> None:
+    assert issubclass(QualityEvaluationError, EvaluationError)
+    assert issubclass(EvaluationError, OptiCoreError)
 
 
 def test_config_rejects_negative_budget() -> None:
@@ -119,3 +135,31 @@ def test_env_override_invalid_value(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("OPTICORE_MAX_TOKEN_BUDGET", "not-a-number")
     with pytest.raises(ConfigurationError):
         load_config(use_env=True)
+
+
+def test_precedence_file_beats_env(tmp_path, monkeypatch) -> None:
+    """Explicit file value wins over an environment variable (file > env)."""
+    config_file = tmp_path / "opticore.yaml"
+    config_file.write_text("safety_mode: aggressive\n")
+    monkeypatch.setenv("OPTICORE_SAFETY_MODE", "balanced")
+    config = load_config(str(config_file), use_env=True)
+    assert config.safety_mode.value == "aggressive"
+
+
+def test_precedence_env_applies_when_file_silent(tmp_path, monkeypatch) -> None:
+    """Env provides the value when the file does not set it explicitly."""
+    config_file = tmp_path / "opticore.yaml"
+    config_file.write_text("max_token_budget: 1024\n")
+    monkeypatch.setenv("OPTICORE_SAFETY_MODE", "balanced")
+    config = load_config(str(config_file), use_env=True)
+    assert config.safety_mode.value == "balanced"
+    assert config.max_token_budget == 1024
+
+
+def test_precedence_nested_quality_file_beats_env(tmp_path, monkeypatch) -> None:
+    """Nested quality block also beats env for the same flattened key."""
+    config_file = tmp_path / "opticore.yaml"
+    config_file.write_text("quality:\n  reject_on_failure: true\n")
+    monkeypatch.setenv("OPTICORE_QUALITY_REJECT_ON_FAILURE", "false")
+    config = load_config(str(config_file), use_env=True)
+    assert config.quality_reject_on_failure is True

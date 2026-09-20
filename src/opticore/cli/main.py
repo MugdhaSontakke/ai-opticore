@@ -46,7 +46,18 @@ def _entrypoint_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init", help="Create a starter opticore.yaml config")
-    sub.add_parser("config", help="Show active configuration")
+
+    p_config = sub.add_parser("config", help="Show or validate the active configuration")
+    p_config.add_argument(
+        "action",
+        nargs="?",
+        choices=["show", "validate"],
+        default="show",
+        help="show=print resolved config; validate=check a config file for errors",
+    )
+    p_config.add_argument("--config", default=None, help="Path to config file")
+    p_config.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+
     sub.add_parser("hardware", help="Detect available hardware backends")
     sub.add_parser("models", help="List providers and available models")
 
@@ -73,10 +84,20 @@ def _entrypoint_parser() -> argparse.ArgumentParser:
     )
     p_bench.add_argument("--model", default=None, help="Model identifier")
     p_bench.add_argument("--config", default=None, help="Path to optics config file")
+    p_bench.add_argument("--dataset", default=None, help="Path to a JSON benchmark dataset")
     p_bench.add_argument("--output", default=None, help="Write JSON report to a file")
     p_bench.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
-    sub.add_parser("cache", help="Explain cache behavior for this configuration")
+    p_cache = sub.add_parser("cache", help="Explain cache behavior or show live stats")
+    p_cache.add_argument(
+        "action",
+        nargs="?",
+        choices=["explain", "stats"],
+        default="explain",
+        help="explain=how caching is configured; stats=live backend statistics",
+    )
+    p_cache.add_argument("--config", default=None, help="Path to optics config file")
+    p_cache.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     return parser
 
 
@@ -130,8 +151,39 @@ def _load(config_path: str | None) -> OptimizationConfig:
 
 
 def cmd_config(args: argparse.Namespace) -> None:
+    if args.action == "validate":
+        _cmd_config_validate(args)
+        return
     config = _load(getattr(args, "config", None))
     print(json.dumps(config.to_dict(), indent=2))
+
+
+def _cmd_config_validate(args: argparse.Namespace) -> None:
+    """Validate a config file strictly; exit non-zero when it is broken."""
+    path = args.config
+    if path is None and os.path.exists(CONFIG_PATH):
+        path = CONFIG_PATH
+    report: dict[str, Any] = {"status": "ok", "path": path, "errors": []}
+    exit_code = 0
+    if path is None:
+        report["note"] = "no config file found; validating built-in defaults"
+    else:
+        try:
+            config = load_config(path)  # raises ConfigurationError on any problem
+            report["config"] = config.to_dict()
+        except OptiCoreError as exc:
+            exit_code = 1
+            report["status"] = "invalid"
+            report["errors"] = [str(exc)]
+    if args.json:
+        print(json.dumps(report, indent=2))
+    elif exit_code == 0:
+        src = path or "built-in defaults"
+        print(f"config valid: {src}")
+        print(json.dumps(report.get("config", {}), indent=2))
+    else:
+        print(f"error: config invalid: {report['errors'][0]}", file=sys.stderr)
+    sys.exit(exit_code)
 
 
 def cmd_hardware(args: argparse.Namespace) -> None:
@@ -216,14 +268,19 @@ def cmd_optimize(args: argparse.Namespace) -> None:
 
 
 def cmd_benchmark(args: argparse.Namespace) -> None:
-    from opticore.benchmarks.runner import BenchmarkRunner
+    from opticore.benchmarks.runner import BenchmarkRunner, load_benchmark_dataset
 
     provider = (
         _load_fake_provider()
         if args.provider == "fake"
         else get_provider_from_name(args.provider)
     )
-    samples = _build_samples(args.samples)
+    if args.dataset:
+        dataset_name = os.path.basename(args.dataset)
+        samples = load_benchmark_dataset(args.dataset)
+    else:
+        dataset_name = "builtin"
+        samples = _build_samples(args.samples)
     config = _load(args.config)
     runner = BenchmarkRunner(
         provider=provider,
@@ -236,6 +293,7 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
             if args.provider == "fake"
             else []
         ),
+        dataset=dataset_name,
     )
     result = runner.run()
     if args.output:
@@ -274,6 +332,9 @@ def _build_samples(count: int):
 
 
 def cmd_cache(args: argparse.Namespace) -> None:
+    if args.action == "stats":
+        _cmd_cache_stats(args)
+        return
     config = _load(getattr(args, "config", None))
     print("Cache is in-memory by default and process-local.")
     if config.enable_semantic_cache:
@@ -281,7 +342,56 @@ def cmd_cache(args: argparse.Namespace) -> None:
     else:
         print("Semantic cache: disabled")
     print(f"TTL: {config.cache_ttl_seconds}s")
-    print("Use the Python API (AIClient) to populate and inspect the cache.")
+    print(
+        "Use the Python API (AIClient) to populate and inspect the cache, or "
+        "run `ai-opticore cache stats`."
+    )
+
+
+def _cmd_cache_stats(args: argparse.Namespace) -> None:
+    """Report live statistics for the cache backend the config selects."""
+    import os as _os
+
+    from opticore.cache import DiskCache, MemoryCache
+
+    config = _load(getattr(args, "config", None))
+    report: dict[str, Any] = {"config": {"cache_backend": config.cache_backend}}
+    base_stats: dict[str, Any]
+    if config.cache_backend == "disk":
+        cache = DiskCache(
+            path=config.cache_disk_path
+            or _os.path.join(_os.getcwd(), ".opticore", "cache.sqlite")
+        )
+        base_stats = cache.stats()
+    else:
+        base_stats = MemoryCache().stats()
+    report["base"] = base_stats
+
+    if config.enable_semantic_cache:
+        report["semantic"] = {
+            "enabled": True,
+            "threshold": config.semantic_cache_threshold,
+            "note": "semantic cache requires an embedding_fn at runtime "
+            "(AIClient); no live statistics available in CLI",
+        }
+    else:
+        report["semantic"] = {"enabled": False}
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return
+
+    print(f"Backend: {base_stats['type']}")
+    print(f"Size (live entries): {base_stats['size']}")
+    print(f"Hits: {base_stats['hits']}  Misses: {base_stats['misses']}")
+    print(f"Hit rate: {base_stats['hit_rate']:.3f}")
+    if "evictions" in base_stats:
+        print(f"Evictions: {base_stats['evictions']}  Invalidations: {base_stats['invalidations']}")
+    if config.enable_semantic_cache:
+        print(
+            f"Semantic cache: enabled "
+            f"(threshold={config.semantic_cache_threshold})"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — v0.2 hardening pass (SSRF guardrails, retry policy, resilience)
+
+- SSRF guardrails: `opticore.security.validate_base_url` blocks link-local /
+  metadata / private-network hosts by default (`allow_private_networks=False`)
+  while keeping local Ollama/vLLM working; `allowed_hosts` hard-allowlist
+  overrides; applied in the OpenAI, Ollama, and HuggingFace providers.
+- Request redaction: `opticore.security.redact_text` / public
+  `opticore.logging.redact_text` scrub API keys, bearer tokens, and
+  authorization headers from every provider error message and log.
+- Retry policy: `opticore.providers.retry` with exponential backoff
+  (`PercentileReachedError`-free), retryable statuses {408,425,429,500,502,503,504},
+  and generic `retry_call` that never retries or wraps already-typed
+  `ProviderError` failures.
+- `ProviderConfig` knobs: `backoff_base_seconds`, `backoff_max_seconds`,
+  `allow_private_networks`, `allowed_hosts`, and derived `max_attempts`
+  (= `max_retries + 1`). Config constraints raise `ConfigurationError`.
+- Providers retry themselves around a bounded budget instead of relying on SDK
+  built-in retries (`max_retries=0`); SDK/HTTP timeout, connection, rate, and
+  server errors map to typed `ProviderError` subclasses with redacted messages;
+  malformed/non-dict provider responses raise `ProviderResponseError`.
+- Pipeline resilience: `strict_optimizers` flag; by default a failing optimizer
+  logs and is skipped (metadata records `optimizer_errors`), with
+  `strict_optimizers=True` it re-raises `OptimizationError`.
+- Disk cache: wall-clock TTLs survive process restarts (converted to a
+  monotonic timeline on read); `stats()` now reports `evictions` and
+  `invalidations` counters.
+- Metrics: `MetricsCollector` series are bounded (`max_series_len=1000`) and
+  `summary()` reports p50/p95 latency when enough samples exist.
+- CLI: `ai-opticore config validate` (exit-code checked) and `config show`,
+  `cache stats` / `cache explain`, `--json` output on config/cache/benchmark,
+  and `benchmark --dataset <file>` (category→scenario mapping, sample
+  metadata preserves `id`/`expected_keywords`).
+- Benchmark JSON (`BenchmarkResult.to_dict`) now includes median/p95 latency,
+  dataset, environment fingerprint, overhead/cost/quality fields; dashboard
+  renders them and shows DATA UNAVAILABLE until a real `--json` file is loaded.
+- Docker: non-root `Dockerfile` (minimal install, build-time `config validate`
+  smoke check, HEALTHCHECK), `.dockerignore`, `docker-compose.yml` with an
+  optional local `ollama` service. Build uses the CLI as the container entry
+  point (`docker compose run --rm app <command>`).
+- Docs: `docs/api_stability.md` classifies Stable / Experimental / Internal
+  symbols; version bumped to 0.2.0.
+- 258 runtime tests (incl. Hypothesis), ruff + mypy clean, ~78% coverage.
+
 ### Added
 
 - MVP module architecture: pipeline, optimizers, cache, providers, routing,
