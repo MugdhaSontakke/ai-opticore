@@ -152,6 +152,20 @@ def test_live_provider_ollama_regression() -> None:
     assert result.original_tokens > 0
 
 
+@live_only
+def test_live_provider_ollama_health_roundtrip() -> None:
+    if not OLLAMA_URL:
+        pytest.skip("OPTICORE_TEST_OLLAMA_URL not set")
+    if not _online(f"{OLLAMA_URL}/api/tags"):
+        pytest.skip("Ollama endpoint not reachable")
+    provider = get_provider("ollama", base_url=OLLAMA_URL, model=OLLAMA_MODEL)
+    report = provider.health(model=OLLAMA_MODEL, probe=True)
+    assert report["healthy"] is True, report
+    assert report["reachable"] is True
+    assert report["ollama_version"]
+    assert report.get("probe", {}).get("ok") is True
+
+
 def test_live_tests_skip_cleanly_outside_ci() -> None:
     """Without the opt-in flag the collection must not fail (this runs always)."""
     if not LIVE:

@@ -70,13 +70,22 @@ class BaseProvider(ABC):
         """List supported model identifiers (may be populated lazily)."""
         return [self.config.model] if self.config.model else []
 
-    def health(self) -> dict[str, Any]:
-        """Return a lightweight capability report."""
-        return {
+    def health(self, model: str | None = None, probe: bool = False) -> dict[str, Any]:
+        """Return a lightweight capability report.
+
+        ``model`` (optional) restricts the report to that model and ``probe``
+        requests a live connectivity check. Subclasses (e.g. Ollama) perform
+        real probes; key-based providers only report configuration, so a wrong
+        key is surfaced by :meth:`generate`, not here.
+        """
+        report: dict[str, Any] = {
             "provider": self.name,
             "configured": self._api_key is not None or not self.requires_api_key,
             "models": self.models(),
         }
+        if model:
+            report["requested_model"] = model
+        return report
 
     def _normalize_request(self, request: dict[str, Any]) -> dict[str, Any]:
         """Fill defaults for a provider request."""

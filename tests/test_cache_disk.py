@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from opticore.api import AIClient
@@ -199,3 +201,28 @@ def test_disk_cache_evictions_and_invalidations_counters(
     conn.close()
     assert cache.get("expired-after-restart") is None
     assert cache.invalidations >= 1
+
+
+def test_disk_cache_concurrent_access(disk_path: str) -> None:
+    """Concurrent writes/reads/deletes must not corrupt the SQLite store."""
+    cache = DiskCache(disk_path)
+    keys = [f"key-{i}" for i in range(48)]
+
+    def worker(i: int) -> str | None:
+        key = keys[i]
+        cache.set(key, content=f"value-{key}", model="m")
+        entry = cache.get(key)
+        assert entry is not None and entry.content == f"value-{key}"
+        if i % 3 == 0:
+            cache.delete(key)
+            return None
+        return entry.content
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(worker, range(len(keys))))
+
+    # Only the non-deleted keys must survive, with the exact stored content.
+    survivors = [r for r in results if r is not None]
+    assert len(survivors) == 32
+    assert all(r and r.startswith("value-key-") for r in survivors)
+    assert cache.stats()["size"] == len(survivors)

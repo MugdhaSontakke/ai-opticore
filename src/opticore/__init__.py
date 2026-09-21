@@ -17,7 +17,7 @@ Stability classification is documented in ``docs/api_stability.md``:
 from __future__ import annotations
 
 __title__ = "ai-opticore"
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __license__ = "MIT"
 
 from opticore.api import AIClient, GenerationResult, OptimizeOutcome, Optimizer

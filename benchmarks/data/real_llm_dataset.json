@@ -1,0 +1,184 @@
+[
+  {
+    "id": "fact_01",
+    "category": "simple_factual",
+    "prompt": "What is the capital of France?",
+    "system": "Answer in one sentence.",
+    "expected_keywords": ["Paris"]
+  },
+  {
+    "id": "fact_02",
+    "category": "simple_factual",
+    "prompt": "Who wrote the novel Moby-Dick?",
+    "system": "Answer in one sentence.",
+    "expected_keywords": ["Melville"]
+  },
+  {
+    "id": "fact_03",
+    "category": "simple_factual",
+    "prompt": "What is the chemical symbol for gold?",
+    "system": "Answer in one word.",
+    "expected_keywords": ["Au"]
+  },
+  {
+    "id": "summ_01",
+    "category": "summarization",
+    "prompt": "Summarize in one sentence: Solar panels convert sunlight directly into electricity using the photovoltaic effect. When photons strike a semiconductor, they knock electrons loose, generating a flow of current. Panels are grouped into arrays and connected to inverters which transform DC into the AC power used by homes.",
+    "system": "Provide a concise one-sentence summary.",
+    "expected_keywords": ["convert", "sunlight", "electricity"]
+  },
+  {
+    "id": "summ_02",
+    "category": "summarization",
+    "prompt": "Summarize in a single sentence: The Industrial Revolution, beginning in Britain around 1760, shifted production from hand tools to machines. New textile machines and steam power drove factories, urbanization accelerated, and living standards rose unevenly over the following century.",
+    "system": "Provide a concise one-sentence summary.",
+    "expected_keywords": ["machines", "factories"]
+  },
+  {
+    "id": "summ_03",
+    "category": "summarization",
+    "prompt": "Tighten to one sentence: Effective caching stores recently computed results so repeated identical requests are answered without recomputation. A cache hit is nearly free; a miss costs one full computation plus a small lookup overhead. TTL and eviction policies decide how long entries remain useful.",
+    "system": "Provide a concise one-sentence summary.",
+    "expected_keywords": ["cache", "hit"]
+  },
+  {
+    "id": "summ_04",
+    "category": "summarization",
+    "prompt": "Condense to one sentence: Rainforests host more than half of the world's plant and animal species despite covering less than seven percent of the land surface. They regulate regional rainfall, store carbon, and supply medicines. Deforestation fragments habitats and accelerates carbon release.",
+    "system": "Provide a concise one-sentence summary.",
+    "expected_keywords": ["species", "deforestation"]
+  },
+  {
+    "id": "rewrite_01",
+    "category": "rewriting",
+    "prompt": "Rewrite to be more concise: Could you please, if it is not too much trouble, provide a brief explanation of the reason for which the sky appears to be colored blue?",
+    "system": "Make the requested text concise without changing meaning.",
+    "expected_keywords": ["blue"]
+  },
+  {
+    "id": "rewrite_02",
+    "category": "rewriting",
+    "prompt": "Rewrite formally: Hey, can you tell me how to reset my password? I'm kind of stuck and it's pretty urgent.",
+    "system": "Rewrite formally and politely.",
+    "expected_keywords": ["password"]
+  },
+  {
+    "id": "rewrite_03",
+    "category": "rewriting",
+    "prompt": "Shorten this without losing key details: The meeting has been rescheduled to Thursday at 10 AM in the main conference room, and the agenda, which includes the budget review and the timeline update, will be circulated by email the day before.",
+    "system": "Shorten while preserving all key facts.",
+    "expected_keywords": ["Thursday", "10"]
+  },
+  {
+    "id": "code_01",
+    "category": "coding",
+    "prompt": "Write a Python function called is_palindrome that takes a string and returns True if it reads the same forward and backward, ignoring case and spaces.",
+    "system": "Return only the code.",
+    "expected_keywords": ["def", "is_palindrome"]
+  },
+  {
+    "id": "code_02",
+    "category": "coding",
+    "prompt": "Write a Python function that accepts a list of integers and returns the sum of the even numbers.",
+    "system": "Return only the code.",
+    "expected_keywords": ["def", "sum"]
+  },
+  {
+    "id": "code_03",
+    "category": "coding",
+    "prompt": "Write a SQL query that selects the name and salary of employees whose salary is above the department average.",
+    "system": "Return only the SQL.",
+    "expected_keywords": ["AVG", "GROUP BY"]
+  },
+  {
+    "id": "explain_01",
+    "category": "explanation",
+    "prompt": "Explain what an API is to someone who has never written code, using an analogy.",
+    "system": "Explain simply, using one concrete analogy.",
+    "expected_keywords": ["analogy"]
+  },
+  {
+    "id": "explain_02",
+    "category": "explanation",
+    "prompt": "Explain the difference between a process and a thread as if talking to a junior developer.",
+    "system": "Explain clearly with a short example.",
+    "expected_keywords": ["process", "thread"]
+  },
+  {
+    "id": "explain_03",
+    "category": "explanation",
+    "prompt": "Explain why prompt tokens matter for API cost and latency when calling large language models.",
+    "system": "Give a concise, accurate explanation.",
+    "expected_keywords": ["token", "cost"]
+  },
+  {
+    "id": "structured_01",
+    "category": "structured_output",
+    "prompt": "Return the capital and population of Japan as JSON with keys 'capital' and 'population'.",
+    "system": "Respond with valid JSON only.",
+    "expected_keywords": ["capital", "population", "{"]
+  },
+  {
+    "id": "structured_02",
+    "category": "structured_output",
+    "prompt": "List three benefits of automated testing. Format each on its own line starting with a dash.",
+    "system": "Respond as a bullet list with exactly three items.",
+    "expected_keywords": ["-"]
+  },
+  {
+    "id": "structured_03",
+    "category": "structured_output",
+    "prompt": "Classify the sentiment of 'The product works and support responded quickly' as POSITIVE, NEGATIVE, or NEUTRAL. Reply with one label only.",
+    "system": "Reply with a single label word.",
+    "expected_keywords": ["POSITIVE"]
+  },
+  {
+    "id": "structured_04",
+    "category": "structured_output",
+    "prompt": "Return the current UTC time as JSON with a single key 'utc' in ISO 8601 format.",
+    "system": "Respond with valid JSON only.",
+    "expected_keywords": ["utc"]
+  },
+  {
+    "id": "long_01",
+    "category": "long_context",
+    "prompt": "Summarize the following passage: Cloud computing provides on-demand compute and storage over the internet and is billed on usage. The passage continues by noting that providers operate global regions, that data is replicated for durability, and that pricing depends on region, instance type, and storage class. Customers choose regions for latency and compliance, configure autoscaling to match load, and monitor costs through budgets and alerts. The main trade-offs are control, cost predictability, and shared responsibility for security.",
+    "system": "Summarize the passage in at most two sentences.",
+    "expected_keywords": ["on-demand", "regions"]
+  },
+  {
+    "id": "long_02",
+    "category": "long_context",
+    "prompt": "Extract the names of every person mentioned, separated by commas: Alice and Bob presented the Q3 results, and later Carol joined the call to discuss onboarding, while Diana, who was traveling, connected by video and David sent notes from the office.",
+    "system": "Return only the comma-separated names.",
+    "expected_keywords": ["Alice", "Bob", "Carol", "Diana", "David"]
+  },
+  {
+    "id": "multi_01",
+    "category": "multi_part",
+    "prompt": "First, state the capital of Italy. Second, name one Italian food you recommend. Third, finish with the word DONE.",
+    "system": "Follow the three instructions in order.",
+    "expected_keywords": ["Rome", "DONE"]
+  },
+  {
+    "id": "multi_02",
+    "category": "multi_part",
+    "prompt": "In one response: (1) define recursion, (2) give one example, (3) say whether recursion is more or less memory-efficient than iteration in the common case, and (4) conclude with the single word FIN.",
+    "system": "Answer all four parts in order.",
+    "expected_keywords": ["FIN"]
+  },
+  {
+    "id": "rep_01",
+    "category": "repetitive",
+    "prompt": "Repeat the word 'blue' ten times separated by spaces.",
+    "system": "Follow the instruction exactly; no extra text.",
+    "expected_keywords": ["blue"]
+  },
+  {
+    "id": "rep_02",
+    "category": "repetitive",
+    "prompt": "What is the capital of France?",
+    "system": "Answer in one sentence.",
+    "expected_keywords": ["Paris"]
+  }
+]

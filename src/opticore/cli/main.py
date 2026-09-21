@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import sys
 from typing import Any
 
@@ -98,6 +99,27 @@ def _entrypoint_parser() -> argparse.ArgumentParser:
     )
     p_cache.add_argument("--config", default=None, help="Path to optics config file")
     p_cache.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="Diagnose the environment and provider connectivity",
+    )
+    p_doctor.add_argument(
+        "--provider",
+        choices=available_providers(),
+        default="ollama",
+        help="Provider to health-check (default: ollama, the local keyless one)",
+    )
+    p_doctor.add_argument("--model", default=None, help="Model to probe (default: llama3.2)")
+    p_doctor.add_argument("--config", default=None, help="Path to optics config file")
+    p_doctor.add_argument(
+        "--no-probe",
+        action="store_false",
+        dest="probe",
+        default=True,
+        help="Skip the live generation probe",
+    )
+    p_doctor.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     return parser
 
 
@@ -198,6 +220,119 @@ def cmd_hardware(args: argparse.Namespace) -> None:
     print(json.dumps(details, indent=2))
 
 
+def cmd_doctor(args: argparse.Namespace) -> None:
+    """Diagnose the environment: package, config, and provider connectivity.
+
+    Staged checks so an offline Ollama server is reported distinctly from a
+    missing model or a malformed response. Exit code 0 when every critical
+    check passes, 1 otherwise.
+    """
+    from opticore.core.config import load_config
+    from opticore.providers import get_provider
+
+    checks: dict[str, Any] = {}
+    errors: list[str] = []
+
+    checks["package"] = {
+        "ok": True,
+        "package_version": __version__,
+        "python": platform.python_version(),
+    }
+
+    path = args.config or (CONFIG_PATH if os.path.exists(CONFIG_PATH) else None)
+    if path is None:
+        checks["config"] = {"ok": True, "source": "built-in defaults"}
+    else:
+        try:
+            load_config(path)
+            checks["config"] = {"ok": True, "source": path}
+        except OptiCoreError as exc:
+            checks["config"] = {"ok": False, "source": path, "errors": [str(exc)]}
+            errors.append(f"config: {exc}")
+
+    provider_name = args.provider
+    model = args.model or "llama3.2"
+    try:
+        provider = get_provider(provider_name, model=model)
+    except OptiCoreError as exc:
+        checks["provider"] = {"name": provider_name, "ok": False, "error": str(exc)}
+        errors.append(str(exc))
+    else:
+        if provider_name == "ollama":
+            health = provider.health(model=model, probe=args.probe)
+        else:
+            health = provider.health()
+        ok = bool(health.get("healthy", health.get("configured", False)))
+        checks["provider"] = {"name": provider_name, "ok": ok, "health": health}
+        if not ok:
+            errors.append(
+                f"provider {provider_name}: {health.get('error') or 'not healthy'}"
+            )
+
+    status = "ok" if not errors else "error"
+    report: dict[str, Any] = {"status": status, "checks": checks}
+    if args.json:
+        print(json.dumps(report, indent=2))
+        sys.exit(1 if errors else 0)
+        return
+
+    _render_doctor(report)
+    if errors:
+        print(f"doctor: {len(errors)} check(s) failed", file=sys.stderr)
+        sys.exit(1)
+    print("doctor: all checks passed")
+    sys.exit(0)
+
+
+def _render_doctor(report: dict[str, Any]) -> None:
+    """Human-readable doctor output; never dumps secrets."""
+    checks = report["checks"]
+    package = checks["package"]
+    print(f"Package: {package['package_version']} (Python {package['python']})")
+    config = checks["config"]
+    if config.get("ok"):
+        print(f"Config: OK ({config.get('source', '?')})")
+    else:
+        print(f"Config: FAIL ({', '.join(config.get('errors', []))})")
+    provider = checks["provider"]
+    if not provider.get("ok"):
+        detail = provider.get("error") or "not healthy"
+        health_detail = provider.get("health", {}).get("error")
+        if health_detail:
+            detail = health_detail
+        print(
+            f"Provider {provider['name']}: FAIL ({detail})"
+        )
+        return
+    health = provider.get("health", {})
+    parts = []
+    if "reachable" in health:
+        parts.append(
+            "reachable" if health.get("reachable") else "NOT reachable"
+        )
+        if health.get("ollama_version"):
+            parts.append(f"v{health['ollama_version']}")
+    if health.get("installed_models"):
+        parts.append(f"{len(health['installed_models'])} model(s) installed")
+    if health.get("requested_model") is not None:
+        parts.append(
+            f"model '{health['requested_model']}' "
+            + ("installed" if health.get("model_installed") else "MISSING")
+        )
+    probe = health.get("probe")
+    if probe is not None:
+        detail = (
+            f"generation OK in {probe.get('elapsed_ms')} ms"
+            if probe.get("ok")
+            else f"generation FAILED ({probe.get('error_kind')})"
+        )
+        parts.append(detail)
+    print(
+        f"Provider {provider['name']}: OK "
+        f"({', '.join(parts)})"
+    )
+
+
 def cmd_models(args: argparse.Namespace) -> None:
     print(f"Registered providers: {', '.join(available_providers())}")
     for name in available_providers():
@@ -205,7 +340,16 @@ def cmd_models(args: argparse.Namespace) -> None:
 
         try:
             provider = get_provider(name)
-            print(f"  {name}: {', '.join(provider.models()) or '(no default model)'}")
+            models = provider.models()
+            if name == "ollama" and not models:
+                print(
+                    "  ollama: (no models found — is Ollama running and a "
+                    "model pulled? try `ai-opticore doctor`)"
+                )
+            else:
+                print(
+                    f"  {name}: {', '.join(models) or '(no default model)'}"
+                )
         except OptiCoreError as exc:
             print(f"  {name}: unavailable ({exc})")
 
@@ -405,6 +549,7 @@ def main(argv: list[str] | None = None) -> int:
         "optimize": cmd_optimize,
         "benchmark": cmd_benchmark,
         "cache": cmd_cache,
+        "doctor": cmd_doctor,
     }
     try:
         handlers[args.command](args)

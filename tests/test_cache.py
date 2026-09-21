@@ -110,3 +110,25 @@ def test_semantic_cache_exact_vs_semantic_tracks_stats() -> None:
     assert hit is True
     stats = cache.stats()
     assert stats["exact_hits"] >= 1
+
+
+def test_memory_cache_concurrent_access() -> None:
+    """Concurrent readers/writers must not corrupt the store or lose entries."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    cache = MemoryCache()
+    keys = [f"key-{i}" for i in range(64)]
+
+    def writer(key: str) -> None:
+        cache.set(key, content=f"value-{key}", model="m")
+
+    def reader(key: str) -> str | None:
+        entry = cache.get(key)
+        return entry.content if entry is not None else None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(writer, keys))
+        results = list(pool.map(reader, keys))
+
+    assert results == [f"value-{key}" for key in keys]
+    assert cache.stats()["size"] == len(keys)

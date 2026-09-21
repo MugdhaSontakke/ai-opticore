@@ -24,12 +24,16 @@ from opticore.core.config import OptimizationConfig
 from opticore.core.interfaces import OptimizerRequest
 from opticore.core.pipeline import build_default_pipeline
 from opticore.costing import CostEstimator
+from opticore.evaluation.evaluator import CharacterSimilarity, TokenJaccardSimilarity
 from opticore.hardware import detect_backend
 from opticore.logging import get_logger
 from opticore.optimizers.token import Tokenizer
 from opticore.providers.base import ProviderResponse
 
 logger = get_logger("opticore.benchmarks")
+
+#: Marker for an optimized response served from cache (no new text generated).
+OPTIMIZED_RESPONSE_CACHE_HIT_MARKER = "__cache_hit__"
 
 
 @dataclass
@@ -46,7 +50,11 @@ class BenchmarkResult:
     samples: int = 0
     dataset: str = "builtin"
     environment: dict[str, Any] = field(default_factory=dict)
+    provider_info: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    sample_responses: list[dict[str, Any]] = field(
+        default_factory=list, repr=False
+    )
 
     def render(self) -> str:
         """Render a human-readable report, as shown by the CLI."""
@@ -62,6 +70,22 @@ class BenchmarkResult:
             f"Samples: {self.samples}",
             f"Timestamp: {env.get('timestamp', 'N/A')}",
             f"Version: {env.get('opticore_version', 'N/A')}",
+        ]
+        if self.provider_info and any(
+            self.provider_info.get(key) is not None
+            for key in ("endpoint", "ollama_version", "installed_models_count", "requested_model")
+        ):
+            lines.append("")
+            lines.append("Provider info:")
+            for key in ("endpoint", "ollama_version", "installed_models_count", "requested_model"):
+                value = self.provider_info.get(key)
+                if value is not None:
+                    lines.append(f"  {key}: {value}")
+            if "reachable" in self.provider_info:
+                lines.append(
+                    "  reachable: " + ("yes" if self.provider_info.get("reachable") else "no")
+                )
+        lines += [
             "",
             "Baseline (no optimization)",
             f"Input tokens: {self.baseline.get('input_tokens', 'N/A')}",
@@ -84,10 +108,32 @@ class BenchmarkResult:
             f"Provider latency (avg): {self._fmt_ms(self.metrics.get('provider_latency_ms_avg'))}",
             f"Cache hit rate: {self.metrics.get('cache_hit_rate', 'N/A')}",
             f"Quality score (avg): {self.metrics.get('quality_score_avg', 'N/A')}",
-            f"Estimated cost baseline: {self.metrics.get('estimated_cost_baseline', 'N/A')}",
-            f"Estimated cost optimized: {self.metrics.get('estimated_cost_optimized', 'N/A')}",
-            f"Estimated savings: {self.metrics.get('estimated_cost_savings', 'N/A')}",
+            f"Response similarity (heuristic): {self.metrics.get('quality_response_similarity_avg', 'N/A')}",
+            "Estimated cost baseline: {baseline}  Estimated cost optimized: {opt}  Estimated savings: {savings}".format(
+                baseline=self.metrics.get('estimated_cost_baseline', 'N/A'),
+                opt=self.metrics.get('estimated_cost_optimized', 'N/A'),
+                savings=self.metrics.get('estimated_cost_savings', 'N/A'),
+            ),
         ]
+        tsp = (
+            (self.metrics.get("tokens_per_sec_baseline"), self.metrics.get("tokens_per_sec_optimized"))
+            if self.metrics.get("tokens_per_sec_baseline") is not None
+            or self.metrics.get("tokens_per_sec_optimized") is not None
+            else None
+        )
+        if tsp:
+            lines += [
+                "",
+                f"Throughput (tokens/sec): baseline={tsp[0]:.0f}  optimized={tsp[1]:.0f}",
+            ]
+        if (
+            "quality_evaluator_type" in self.metrics
+            and self.metrics["quality_evaluator_type"]
+        ):
+            lines += [
+                "",
+                f"Quality evaluator: {self.metrics['quality_evaluator_type']}",
+            ]
         scenarios = self.metrics.get("scenarios")
         if scenarios:
             lines += ["", "Per-scenario (token reduction, avg latency, samples):"]
@@ -105,9 +151,10 @@ class BenchmarkResult:
         return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-serializable representation (no raw prompts)."""
+        """JSON-serializable representation (no raw prompts or responses)."""
         return {
             "environment": self.environment,
+            "provider_info": self.provider_info,
             "model": self.model,
             "provider": self.provider,
             "hardware": self.hardware,
@@ -170,15 +217,25 @@ class BenchmarkRunner:
         cache_hits = 0
         cache_misses = 0
         scenario_runs: dict[str, list[Any]] = {}
+        baseline_responses: list[str] = []
+        optimized_responses: list[str] = []
+        baseline_tokens_per_sec: list[float] = []
+        optimized_tokens_per_sec: list[float] = []
+        sample_responses: list[dict[str, Any]] = []
         if getattr(self.provider, "name", "").startswith("fake"):
             self.provider_notes.append("deterministic fake provider; latency is not representative")
 
         for request in self.samples:
             metadata = getattr(request, "metadata", None) or {}
             scenario = metadata.get("scenario") or "default"
+            sample_id = metadata.get("id") or scenario
             for _ in range(self.repeats):
                 base_input_tokens = self._request_tokens(request, tokenizer)
-                latency, out_tokens, _ = self._call(request)
+                latency, out_tokens, base_content = self._call(request)
+                baseline_responses.append(base_content or "")
+                _record_tokens_per_sec(
+                    baseline_tokens_per_sec, out_tokens, latency
+                )
                 baseline_metrics["latency_ms"].append(latency)
                 baseline_metrics["output_tokens"].append(out_tokens)
                 baseline_metrics["input_tokens"].append(base_input_tokens)
@@ -224,10 +281,17 @@ class BenchmarkRunner:
                         opt_latency = (time.monotonic() - lookup_started) * 1000.0
                         opt_latency += optimizer_overhead_ms
                         opt_out = float(entry.metadata.get("output_tokens", 0))
+                        optimized_responses.append(
+                            OPTIMIZED_RESPONSE_CACHE_HIT_MARKER
+                        )
                     else:
                         cache_misses += 1
                         run_provider_latency, opt_out, content = self._call(
                             optimized_request
+                        )
+                        optimized_responses.append(content or "")
+                        _record_tokens_per_sec(
+                            optimized_tokens_per_sec, opt_out, run_provider_latency
                         )
                         opt_latency = (
                             time.monotonic() - lookup_started
@@ -243,7 +307,11 @@ class BenchmarkRunner:
                         except Exception:  # noqa: BLE001 - cache must not break benchmark
                             logger.warning("cache write failed during benchmark")
                 else:
-                    run_provider_latency, opt_out, _ = self._call(optimized_request)
+                    run_provider_latency, opt_out, opt_content = self._call(optimized_request)
+                    optimized_responses.append(opt_content or "")
+                    _record_tokens_per_sec(
+                        optimized_tokens_per_sec, opt_out, run_provider_latency
+                    )
                     opt_latency = run_provider_latency + optimizer_overhead_ms
                     provider_latencies.append(run_provider_latency)
                 optimized_metrics["latency_ms"].append(opt_latency)
@@ -259,6 +327,26 @@ class BenchmarkRunner:
                         "opt_latency_ms": opt_latency,
                     }
                 )
+                if request.prompt:
+                    sample_responses.append(
+                        {
+                            "sample_id": str(sample_id),
+                            "scenario": str(scenario),
+                            "baseline": baseline_responses[-1]
+                            if baseline_responses
+                            else "",
+                            "optimized": (
+                                optimized_responses[-1]
+                                if optimized_responses
+                                and optimized_responses[-1]
+                                != OPTIMIZED_RESPONSE_CACHE_HIT_MARKER
+                                else ""
+                            ),
+                            "cache_hit": entry is not None
+                            if self._cache is not None
+                            else False,
+                        }
+                    )
 
         if cache_hits:
             self.provider_notes.append(
@@ -289,7 +377,9 @@ class BenchmarkRunner:
             samples=len(self.samples) * self.repeats,
             dataset=self.dataset,
             environment=_environment_report(tokenizer),
+            provider_info=_provider_info(self.provider, model=self.model),
             notes=list(self.provider_notes),
+            sample_responses=sample_responses,
         )
 
         base_in = benchmark.baseline["input_tokens"]
@@ -330,6 +420,18 @@ class BenchmarkRunner:
             "cache_hits": cache_hits,
             "cache_misses": cache_misses,
             "optimizer_overhead_ms_avg": _avg(optimizer_times),
+            "tokens_per_sec_baseline": _avg(baseline_tokens_per_sec),
+            "tokens_per_sec_optimized": _avg(optimized_tokens_per_sec),
+            "quality_response_similarity_avg": _pair_similarity(
+                baseline_responses, optimized_responses, CharacterSimilarity()
+            ),
+            "quality_response_token_jaccard_avg": _pair_similarity(
+                baseline_responses, optimized_responses, TokenJaccardSimilarity()
+            ),
+            "quality_evaluator_type": (
+                "heuristic: character_similarity + token_jaccard "
+                "(deterministic, no model-based judge configured)"
+            ),
             "avg_tokens_saved_per_request": max(0, (base_in or 0) - (opt_in or 0)),
             "quality_score_avg": (
                 round(statistics.mean(quality_scores), 4) if quality_scores else "N/A"
@@ -507,6 +609,57 @@ def _avg(values: list[float]) -> float | None:
     if not values:
         return None
     return round(statistics.mean(values), 2)
+
+
+def _record_tokens_per_sec(sink: list[float], tokens: float, latency_ms: float) -> None:
+    """Record generation throughput only for real, measurable latency."""
+    if not tokens or not latency_ms or latency_ms < 1.0:
+        return
+    sink.append(tokens / (latency_ms / 1000.0))
+
+
+def _pair_similarity(
+    baseline: list[str], optimized: list[str], evaluator: Any
+) -> float | str:
+    """Mean heuristic similarity between paired baseline/optimized responses.
+
+    Cache-hit optimized entries have no new text, so they are excluded from
+    the average (they were compared already when first generated).
+    """
+    scores: list[float] = []
+    for i, opt_text in enumerate(optimized):
+        if opt_text == OPTIMIZED_RESPONSE_CACHE_HIT_MARKER or i >= len(baseline):
+            continue
+        base_text = baseline[i]
+        if not base_text.strip() or not opt_text.strip():
+            continue
+        scores.append(evaluator.similarity(base_text, opt_text))
+    if not scores:
+        return "N/A"
+    return round(statistics.mean(scores), 4)
+
+
+def _provider_info(provider: Any, model: str | None = None) -> dict[str, Any]:
+    """Rendering-safe provider details for the report.
+
+    Only Ollama performs a live probe here; key-based providers report only
+    what is safe without network calls or secrets.
+    """
+    name = getattr(provider, "name", "unknown")
+    if name != "ollama":
+        return {"provider": name}
+    try:
+        health = provider.health(model=model)
+    except Exception:  # noqa: BLE001 - health must never break a benchmark
+        return {"provider": name, "note": "health probe unavailable"}
+    return {
+        "provider": name,
+        "endpoint": health.get("endpoint"),
+        "reachable": bool(health.get("reachable")),
+        "ollama_version": health.get("ollama_version"),
+        "requested_model": health.get("requested_model"),
+        "installed_models_count": len(health.get("installed_models") or []),
+    }
 
 
 def _median(values: list[float]) -> float | None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
@@ -130,3 +131,77 @@ class TestCliDatasetFlag:
         payload = json.loads(result.stdout)
         assert payload["dataset"] == "fixtures.json"
         assert "metrics" in payload
+
+
+class _LocalProvider:
+    """Deterministic provider with measurable latency (not labeled fake)."""
+
+    name = "local"
+
+    def __init__(self) -> None:
+        import time
+
+        self._time = time
+        self.config = type("C", (), {"model": "m"})()  # type: ignore[attr-defined]
+
+    def generate(self, payload: dict[str, Any]) -> Any:
+        from opticore.providers.base import ProviderResponse
+
+        self._time.sleep(0.002)
+        prompt = str(payload.get("prompt", ""))
+        return ProviderResponse(
+            content=f"about {prompt[:20]}",
+            model="m",
+            provider=self.name,
+            input_tokens=10,
+            output_tokens=20,
+            latency_ms=2.0,
+        )
+
+
+class TestRunnerExtendedMetrics:
+    def test_provider_info_attached_and_not_in_json(self) -> None:
+        runner = BenchmarkRunner(
+            provider=_LocalProvider(),
+            model="m",
+            samples=[load_benchmark_dataset(FIXTURES)[0]],
+            repeats=1,
+        )
+        result = runner.run()
+        assert result.provider_info == {"provider": "local"}
+        assert "provider_info" in result.to_dict()
+        assert result.to_dict()["provider_info"] == {"provider": "local"}
+
+    def test_tokens_per_sec_and_quality_similarity_measured(self) -> None:
+        runner = BenchmarkRunner(
+            provider=_LocalProvider(),
+            model="m",
+            samples=[load_benchmark_dataset(FIXTURES)[0]],
+            repeats=1,
+        )
+        result = runner.run()
+        assert result.metrics["tokens_per_sec_baseline"] is not None
+        assert result.metrics["tokens_per_sec_baseline"] > 0
+        score = result.metrics["quality_response_similarity_avg"]
+        assert isinstance(score, float) and 0.0 <= score <= 1.0
+        assert "heuristic" in result.metrics["quality_evaluator_type"]
+
+    def test_sample_responses_preserved_but_not_serialized(self) -> None:
+        samples = load_benchmark_dataset(FIXTURES)[:2]
+        runner = BenchmarkRunner(
+            provider=_LocalProvider(),
+            model="m",
+            samples=samples,
+            repeats=1,
+        )
+        result = runner.run()
+        assert len(result.sample_responses) == len(samples)
+        assert all("baseline" in s and "optimized" in s for s in result.sample_responses)
+        assert "sample_responses" not in result.to_dict()
+
+    def test_real_llm_dataset_loads(self) -> None:
+        samples = load_benchmark_dataset("benchmarks/data/real_llm_dataset.json")
+        assert len(samples) >= 24
+        scenarios = {s.metadata["scenario"] for s in samples}
+        assert {"coding", "summarization", "structured_output"} <= scenarios
+        assert all(s.metadata.get("id") for s in samples)

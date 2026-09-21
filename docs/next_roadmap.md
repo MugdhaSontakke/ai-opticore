@@ -7,6 +7,16 @@ honest, ordered plan.
 
 ## Completed (verified in this repository)
 
+- **v0.3.0 — real end-to-end LLM evaluation with Ollama + Llama 3.2**
+  (2026-09-21): live `health()` probe with staged diagnostics feeding
+  `ai-opticore doctor`; `python -m opticore`; heuristic baseline-vs-optimized
+  response similarity, tokens/sec, and provider info in benchmark reports; a
+  26-prompt deterministic real-LLM dataset; `examples/ollama_demo.py`;
+  mock-based test coverage of the Ollama HTTP/probe paths (no network in CI);
+  live opt-in Ollama regression test (`OPTICORE_TEST_LIVE=1`). See
+  `docs/ollama.md`. Run the real benchmark on a machine with Ollama:
+  `ai-opticore benchmark --provider ollama --model llama3.2
+  --dataset benchmarks/data/real_llm_dataset.json --json`.
 - Quality gate wired into the pipeline with safe fallback and loud failure on
   unknown evaluators.
 - Optimizer-overhead vs provider-latency decomposition; median/p95 latency;
@@ -37,8 +47,10 @@ honest, ordered plan.
    healthcheck, and a non-root user.
 4. **Routing capability checks** — validate provider `models()` + context
    limits before a routing decision is accepted.
-5. **Mock-based unit tests for SDK paths** — openai/ollama/huggingface request
-   building and error mapping without network (raises CI coverage meaningfully).
+5. **Mock-based unit tests for SDK paths** — Ollama HTTP/health paths are now
+   covered (`tests/test_ollama_health.py`); openai/huggingface request
+   building and error mapping without network remain (raises CI coverage
+   meaningfully).
 
 ## Later
 

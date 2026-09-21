@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from opticore import Optimizer, OptimizationConfig, SafetyMode
+from opticore import OptimizationConfig, Optimizer, SafetyMode
 
 MESSY_PROMPT = (
     "   Please   write me a poem about   the ocean   \n\n"

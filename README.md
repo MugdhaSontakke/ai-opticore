@@ -78,7 +78,7 @@ flowchart LR
 | Cost | Optional user-configured pricing; costs are always labeled `estimated` and `N/A` when unconfigured |
 | Evaluation | Request/response similarity, quality gates, pluggable evaluators; rejection restores the original request |
 | Metrics | Unified `MetricsCollector` that is extensible |
-| CLI | `init`, `optimize`, `benchmark`, `cache`, `models`, `hardware`, `config` |
+| CLI | `init`, `optimize`, `benchmark`, `cache`, `models`, `hardware`, `config`, `doctor` |
 | Dashboard | Lightweight React dashboard (see `dashboard/`) |
 
 ## Installation
@@ -199,6 +199,76 @@ pricing:
 
 > AI-OptiCore provides tools for measuring and reducing unnecessary token usage. We do not publish fixed reduction claims — run your own benchmarks on your own workloads.
 
+## Configuration & CLI reference
+
+Configuration precedence: **defaults → `opticore.yaml` (or `--config`) → `OPTICORE_*` environment variables → explicit API arguments**.
+
+```bash
+ai-opticore init                 # write a starting opticore.yaml (never contains keys)
+ai-opticore config               # show the effective configuration
+ai-opticore config validate      # exit 0 if valid, non-zero + reason if not
+ai-opticore config --json        # machine-readable config output
+ai-opticore cache explain        # describe how caching behaves for this setup
+ai-opticore cache stats          # hits/misses/evictions for the on-disk cache
+ai-opticore cache stats --json
+ai-opticore models               # providers and (for Ollama) installed models
+ai-opticore doctor --provider ollama --model llama3.2   # connectivity diagnostics
+```
+
+`doctor` runs staged environment checks (package, config, then provider
+connectivity) and answers, for Ollama: *is the server reachable, which models
+are installed, is the requested model present, and can a small generation
+complete?* It exits non-zero when a critical check fails and reports distinct
+reasons for an offline server vs a missing model. `python -m opticore` is an
+alias for the `ai-opticore` CLI.
+
+Provider endpoints and credentials come from the environment (see
+[`.env.example`](.env.example)):
+
+| Variable | Used by | Default |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | OpenAI-compatible provider | — (required) |
+| `config.base_url` | OpenAI-compatible provider (`AIClient(provider=..., config=ProviderConfig(base_url=...))`; e.g. Azure/vLLM/llama.cpp servers) | OpenAI API |
+| `OLLAMA_BASE_URL` | Ollama provider | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Ollama provider default model | `llama3.2` |
+
+Provider URLs are validated before any connection (SSRF guardrails; see
+[`SECURITY.md`](SECURITY.md)). A URL pointing at cloud-metadata or link-local
+addresses is rejected outright; local model servers like Ollama work because
+private/loopback networks are enabled by default. If you accept provider URLs
+from untrusted users, disable `allow_private_networks` or set `allowed_hosts`.
+
+Benchmarking accepts your own scenario file:
+
+```bash
+ai-opticore benchmark --dataset benchmarks/data/fixtures.json --json
+# dataset schema: list of {"prompt", "system"?, "messages"?, "tools"?,
+# "category"? (→ scenario tag), "id"?, "expected_keywords"?}
+```
+
+## Docker
+
+A non-root, minimal image with a built-in healthcheck. The container entry
+point is the CLI, so run one-off commands with `docker compose run`:
+
+```bash
+docker build -t ai-opticore .
+docker compose run --rm app config validate
+docker compose run --rm app optimize --prompt "Hello    World"
+docker compose run --rm app benchmark --provider openai --model gpt-4o-mini
+```
+
+An optional `ollama` service is declared in `docker-compose.yml` — start it
+only if you want a local model endpoint:
+
+```bash
+docker compose up -d ollama
+docker compose run --rm app benchmark --provider ollama --model <model>
+```
+
+Secrets are injected via environment (`OPENAI_API_KEY=${OPENAI_API_KEY:-}`);
+nothing is baked into the image.
+
 ## Provider regression testing
 
 ```bash
@@ -210,6 +280,54 @@ pytest -q tests/test_providers_live.py
 
 See `tests/test_providers_live.py` for all supported variables (OpenAI-compatible,
 Ollama), plus the manual `provider-live` GitHub workflow.
+
+## Real LLM evaluation with Ollama
+
+The fastest way to exercise the full pipeline end-to-end against a **real local
+LLM** is Ollama + Llama 3.2. Install Ollama (https://ollama.com), then:
+
+```bash
+# 1. Start the server and pull a model (one-time)
+ollama serve &                 # or: brew services start ollama
+ollama pull llama3.2
+
+# 2. Verify connectivity: reachable? models installed? generation probe OK?
+ai-opticore doctor --provider ollama --model llama3.2
+
+# 3. Single real request through the pipeline (optimized prompt + cache MISS→HIT)
+python examples/ollama_demo.py
+
+# 4. Full benchmark against a real-LLM dataset (26 prompts, 9 categories)
+ai-opticore benchmark \
+  --provider ollama --model llama3.2 \
+  --dataset benchmarks/data/real_llm_dataset.json \
+  --repeats 2 --json          # add --output report.json to save
+
+# 5. Live-regression tests (opt-in; real network, skipped in CI)
+OPTICORE_TEST_LIVE=1 OPTICORE_TEST_OLLAMA_URL=http://localhost:11434 \
+  pytest -q tests/test_providers_live.py
+```
+
+What the report tells you:
+
+- **Token reduction** — measured prompt tokens before vs after optimization.
+- **Latency** — baseline vs optimized median and p95, plus optimizer overhead
+  split out from provider latency; a *slower* net result is reported honestly.
+- **Cache hit rate** — repeated requests are served from cache (MISS then HIT).
+- **Quality** — a HEURISTIC character/token similarity of the baseline vs
+  optimized *responses* (`quality_response_similarity_avg`). It is
+  deterministic and dependency-free, and it is explicitly **not** a
+  model-based judge; an optional judge/evaluator is a planned milestone.
+- **Cost** — `N/A` for a local Ollama endpoint (no per-token billing).
+- **Provider info** — Ollama version, model, installed-model count.
+- **Tokens/sec** — generation throughput on responses with real measurable
+  latency.
+
+AI-OptiCore does **not** train or fine-tune an LLM. It optimizes the *text you
+send* to a model you already run; the Ollama integration here is provider
+connectivity plus measurement, not model training.
+
+> Full guide: [`docs/ollama.md`](docs/ollama.md).
 
 ## Supported providers
 
@@ -235,6 +353,7 @@ Detection never fakes results. If a backend is unavailable, a clear capability m
 - [x] v0.1 hardening pass 2 (real provider analytics, per-step timing, honest timing/caching, `ai-opticore` exit codes)
 - [x] v0.1.0 — Disk cache backend (SQLite), estimated-cost accounting, per-scenario benchmarks, provider regression test framework, observability (request IDs, routing/quality/fallback metadata), dashboard REAL-vs-DEMO labeling
 - [x] v0.2.0 — SSRF guardrails (`validate_base_url`), provider retry policy with typed error mapping, request redaction, config `validate`, cache `stats`, benchmark `--dataset`, dashboard DATA UNAVAILABLE state + median/p95/overhead/cost rendering, Docker (non-root image, compose with optional Ollama), `docs/api_stability.md`
+- [x] v0.3.0 — Real end-to-end LLM evaluation with Ollama + Llama 3.2: live `doctor` health probe (`ai-opticore doctor`), `python -m opticore`, response-quality heuristic vs optimized responses, tokens/sec, provider info in reports, 26-prompt real-LLM dataset, `examples/ollama_demo.py`, mock-tested Ollama HTTP paths, live-opt-in regression tests
 - [ ] v0.2 — Live-provider matrix validated per release; mock-based unit tests for provider SDK request/error paths
 - [ ] v0.3 — Redis cache backend; real batched inference executor
 - [ ] v0.3 — Response-level quality gate with a judge/similarity model (optional path)

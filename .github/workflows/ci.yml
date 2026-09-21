@@ -55,11 +55,23 @@ jobs:
       - name: CLI smoke test
         run: |
           ai-opticore init
+          ai-opticore config
+          ai-opticore config validate
+          ai-opticore config --json
           ai-opticore hardware
           ai-opticore models
           ai-opticore optimize --prompt "hello   world"
           ai-opticore benchmark --samples 2 --repeats 1 --provider fake
           ai-opticore cache
+          ai-opticore cache stats
+          ai-opticore cache stats --json
+          python -m opticore --version
+          # doctor returns non-zero when Ollama is offline (as in CI); this
+          # smoke test asserts the diagnostic runs without crashing.
+          ai-opticore doctor --provider ollama --model llama3.2 --no-probe --json || true
+      - name: End-to-end example smoke test
+        run: |
+          python examples/example_aiclient.py
 
   security:
     runs-on: ubuntu-latest

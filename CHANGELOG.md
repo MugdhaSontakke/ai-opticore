@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-21
+
+### Added — Real end-to-end LLM evaluation with Ollama + Llama 3.2
+
+- Ollama `health()` now performs a real, staged connectivity check
+  (server reachable → installed models → requested model present → optional
+  small generation probe) with distinct `error_kind` results
+  (`not_running`, `timeout`, `http:<status>`, `malformed_response`,
+  `model_not_found`). Never raises for an offline server.
+  (`src/opticore/providers/ollama.py`)
+- New `ai-opticore doctor` command: environment diagnostics (package, config,
+  provider connectivity) with `--json`, `--provider`, `--model`, `--no-probe`;
+  exits 0 only when all critical checks pass.
+  (`src/opticore/cli/main.py`)
+- `python -m opticore` is now a working alias for the CLI
+  (`src/opticore/__main__.py`).
+- `OLLAMA_MODEL` environment variable honored as the default Ollama model.
+- Benchmark report additions: `provider_info` (Ollama version / endpoint /
+  installed-model count), `tokens_per_sec_baseline` / `tokens_per_sec_optimized`
+  (on responses with real measurable latency), heuristic
+  `quality_response_similarity_avg` + `quality_response_token_jaccard_avg`
+  comparing baseline vs optimized *responses*, and a `sample_responses` list
+  preserved on the result object but never serialized to JSON.
+  (`src/opticore/benchmarks/runner.py`)
+- Real-LLM benchmark dataset: 26 deterministic prompts across 9 categories
+  (`benchmarks/data/real_llm_dataset.json`).
+- `examples/ollama_demo.py`: real end-to-end demo (MODE A baseline vs
+  MODE B optimized+cached, cache MISS→HIT, cost N/A for local Ollama, typed
+  suggestions when the server/model is missing).
+- Mock-based tests for the Ollama HTTP paths and health probe
+  (`tests/test_ollama_health.py`); live opt-in health regression test added to
+  `tests/test_providers_live.py` (runs only with `OPTICORE_TEST_LIVE=1`).
+- Docs: `docs/ollama.md` real-LLM guide; README "Real LLM evaluation with
+  Ollama" section; `.env.example` documents `OLLAMA_MODEL`.
+
+### Changed
+
+- urllib3 `NotOpenSSLWarning` (LibreSSL on macOS) is suppressed at the Ollama
+  `requests` import site so CLI output stays clean.
+
+## [Unreleased]
+
 ### Added — v0.2 hardening pass (SSRF guardrails, retry policy, resilience)
 
 - SSRF guardrails: `opticore.security.validate_base_url` blocks link-local /
